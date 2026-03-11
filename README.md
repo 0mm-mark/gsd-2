@@ -321,7 +321,7 @@ gsd (CLI binary)
 ## Requirements
 
 - **Node.js** ≥ 20.6.0 (22+ recommended)
-- **An LLM provider** — Anthropic API key (handled by Pi's built-in auth flow on first launch), or any of the 20+ supported providers
+- **An LLM provider** — any of the 20+ supported providers (see [Use Any Model](#use-any-model))
 - **Git** — initialized automatically if missing
 
 Optional:
