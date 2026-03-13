@@ -2744,14 +2744,34 @@ export function resolveExpectedArtifactPath(unitType: string, unitId: string, ba
 }
 
 /**
- * Check whether the expected artifact for a unit exists on disk.
- * Returns true if the artifact file exists, or if the unit type has no
+ * Check whether the expected artifact(s) for a unit exist on disk.
+ * Returns true if all required artifacts exist, or if the unit type has no
  * single verifiable artifact (e.g., replan-slice).
+ *
+ * complete-slice requires both SUMMARY and UAT files — verifying only
+ * the summary allowed the unit to be marked complete when the LLM
+ * skipped writing the UAT file (see #176).
  */
 function verifyExpectedArtifact(unitType: string, unitId: string, base: string): boolean {
   const absPath = resolveExpectedArtifactPath(unitType, unitId, base);
   if (!absPath) return true;
-  return existsSync(absPath);
+  if (!existsSync(absPath)) return false;
+
+  // complete-slice must also produce a UAT file
+  if (unitType === "complete-slice") {
+    const parts = unitId.split("/");
+    const mid = parts[0];
+    const sid = parts[1];
+    if (mid && sid) {
+      const dir = resolveSlicePath(base, mid, sid);
+      if (dir) {
+        const uatPath = join(dir, buildSliceFileName(sid, "UAT"));
+        if (!existsSync(uatPath)) return false;
+      }
+    }
+  }
+
+  return true;
 }
 
 /**
@@ -2795,7 +2815,7 @@ function diagnoseExpectedArtifact(unitType: string, unitId: string, base: string
       return `Task ${tid} marked [x] in ${relSliceFile(base, mid!, sid!, "PLAN")} + summary written`;
     }
     case "complete-slice":
-      return `Slice ${sid} marked [x] in ${relMilestoneFile(base, mid!, "ROADMAP")} + summary written`;
+      return `Slice ${sid} marked [x] in ${relMilestoneFile(base, mid!, "ROADMAP")} + summary + UAT written`;
     case "replan-slice":
       return `${relSliceFile(base, mid!, sid!, "REPLAN")} + updated ${relSliceFile(base, mid!, sid!, "PLAN")}`;
     case "reassess-roadmap":
