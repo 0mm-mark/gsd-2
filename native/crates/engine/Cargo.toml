@@ -16,6 +16,7 @@ gsd-grep = { path = "../grep" }
 arboard = "3"
 dashmap = "6"
 globset = "0.4"
+html-to-markdown-rs = { version = "2", default-features = false }
 ignore = "0.4"
 image = { version = "0.25", default-features = false, features = ["png"] }
 napi = { version = "2", features = ["napi8"] }

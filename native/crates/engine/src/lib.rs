@@ -15,5 +15,6 @@ mod glob_util;
 mod ast;
 mod grep;
 mod highlight;
+mod html;
 mod ps;
 mod task;

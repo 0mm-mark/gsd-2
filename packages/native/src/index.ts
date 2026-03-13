@@ -7,6 +7,7 @@
  * - ps: cross-platform process tree management
  * - glob: gitignore-respecting filesystem discovery with scan caching
  * - highlight: syntect-based syntax highlighting
+ * - html: HTML to Markdown conversion
  */
 
 export {
@@ -54,3 +55,6 @@ export type {
   AstFindMatch, AstFindOptions, AstFindResult,
   AstReplaceChange, AstReplaceFileChange, AstReplaceOptions, AstReplaceResult,
 } from "./ast/index.js";
+
+export { htmlToMarkdown } from "./html/index.js";
+export type { HtmlToMarkdownOptions } from "./html/index.js";

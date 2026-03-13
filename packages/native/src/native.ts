@@ -60,4 +60,5 @@ export const native = loadNative() as {
   readImageFromClipboard: () => Promise<unknown>;
   astGrep: (options: unknown) => unknown;
   astEdit: (options: unknown) => unknown;
+  htmlToMarkdown: (html: string, options: unknown) => unknown;
 };
