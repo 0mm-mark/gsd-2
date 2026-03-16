@@ -14,7 +14,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const projectRoot = join(fileURLToPath(import.meta.url), "..", "..", "..");
 const extensionsDir = join(projectRoot, "src", "resources", "extensions");
@@ -47,7 +47,7 @@ test("all bundled extensions can be imported without throwing", async () => {
     }
 
     try {
-      await import(entryPath);
+      await import(pathToFileURL(entryPath).href);
     } catch (err) {
       failures.push({
         path: relPath,
