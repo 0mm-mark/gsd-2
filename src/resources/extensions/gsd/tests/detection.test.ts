@@ -823,6 +823,21 @@ test("detectProjectSignals: pyproject optional-dependency group name does not tr
   }
 });
 
+test("detectProjectSignals: pyproject multiline optional dependency emits dep:fastapi", () => {
+  const dir = makeTempDir("signals-fastapi-pyproject-optional-multiline");
+  try {
+    writeFileSync(
+      join(dir, "pyproject.toml"),
+      '[project]\ndependencies = ["flask>=3.0"]\n\n[project.optional-dependencies]\napi = [\n  "fastapi>=0.115",\n  "uvicorn>=0.30",\n]\n',
+      "utf-8",
+    );
+    const signals = detectProjectSignals(dir);
+    assert.ok(signals.detectedFiles.includes("dep:fastapi"), "multiline optional dependency arrays should trigger FastAPI detection");
+  } finally {
+    cleanup(dir);
+  }
+});
+
 test("detectProjectSignals: FastAPI direct reference with @ emits dep:fastapi", () => {
   const dir = makeTempDir("signals-fastapi-direct-reference");
   try {
@@ -1056,6 +1071,23 @@ test("detectProjectSignals: Spring Boot version-catalog library alias emits dep:
     );
     const signals = detectProjectSignals(dir);
     assert.ok(signals.detectedFiles.includes("dep:spring-boot"), "Spring Boot library aliases should trigger detection");
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test("detectProjectSignals: Spring Boot version-catalog bundle alias emits dep:spring-boot", () => {
+  const dir = makeTempDir("signals-spring-version-catalog-bundle");
+  try {
+    mkdirSync(join(dir, "gradle"), { recursive: true });
+    writeFileSync(join(dir, "build.gradle.kts"), "dependencies { implementation(libs.bundles.backend.web) }", "utf-8");
+    writeFileSync(
+      join(dir, "gradle", "libs.versions.toml"),
+      "[libraries]\nspring-boot-starter-web = { module = 'org.springframework.boot:spring-boot-starter-web', version = '3.2.0' }\n\n[bundles]\nbackend-web = ['spring-boot-starter-web']\n",
+      "utf-8",
+    );
+    const signals = detectProjectSignals(dir);
+    assert.ok(signals.detectedFiles.includes("dep:spring-boot"), "Spring Boot bundle aliases should trigger detection");
   } finally {
     cleanup(dir);
   }

@@ -825,6 +825,7 @@ function containsSpringBootMarker(
 
   const springBootAliases = new Set<string>();
   const springBootLibraries = new Set<string>();
+  const springBootBundles = new Set<string>();
   for (const relativePath of versionCatalogFiles) {
     try {
       const raw = readBounded(join(basePath, relativePath), 64 * 1024);
@@ -839,6 +840,18 @@ function containsSpringBootMarker(
       while ((match = libraryRe.exec(content)) !== null) {
         springBootLibraries.add(normalizePluginAlias(match[1]));
       }
+
+      const bundleRe = /^\s*([A-Za-z0-9_.-]+)\s*=\s*\[([\s\S]*?)\]/gm;
+      while ((match = bundleRe.exec(content)) !== null) {
+        const bundleAlias = normalizePluginAlias(`bundles.${match[1]}`);
+        const referencedAliases = match[2]
+          .split(",")
+          .map((part) => normalizePluginAlias(part.replace(/["'\s]/g, "")))
+          .filter(Boolean);
+        if (referencedAliases.some((alias) => springBootLibraries.has(alias))) {
+          springBootBundles.add(bundleAlias);
+        }
+      }
     } catch {
       // unreadable version catalog — continue scanning others
     }
@@ -848,7 +861,7 @@ function containsSpringBootMarker(
     if (springBootAliases.has(alias)) return true;
   }
   for (const alias of usedLibraryAliases) {
-    if (springBootLibraries.has(alias)) return true;
+    if (springBootLibraries.has(alias) || springBootBundles.has(alias)) return true;
   }
 
   return false;
@@ -888,6 +901,7 @@ function extractPyprojectDependencySections(content: string): string {
   const collected: string[] = [];
   let section = "";
   let collectingProjectDeps = false;
+  let collectingOptionalDeps = false;
   let bracketDepth = 0;
 
   for (const line of lines) {
@@ -898,6 +912,15 @@ function extractPyprojectDependencySections(content: string): string {
       bracketDepth += countChar(line, "[") - countChar(line, "]");
       if (bracketDepth <= 0) {
         collectingProjectDeps = false;
+      }
+      continue;
+    }
+
+    if (collectingOptionalDeps) {
+      collected.push(line);
+      bracketDepth += countChar(line, "[") - countChar(line, "]");
+      if (bracketDepth <= 0) {
+        collectingOptionalDeps = false;
       }
       continue;
     }
@@ -923,7 +946,10 @@ function extractPyprojectDependencySections(content: string): string {
       if (section === "project.optional-dependencies") {
         const equalsIndex = line.indexOf("=");
         if (equalsIndex !== -1) {
-          collected.push(line.slice(equalsIndex + 1));
+          const value = line.slice(equalsIndex + 1);
+          collected.push(value);
+          bracketDepth = countChar(value, "[") - countChar(value, "]");
+          collectingOptionalDeps = bracketDepth > 0;
         }
       } else {
         collected.push(line);
