@@ -10,7 +10,6 @@
 import type { ExtensionContext } from "@gsd/pi-coding-agent";
 import { parseUnitId } from "./unit-id.js";
 import { atomicWriteSync } from "./atomic-write.js";
-import { clearUnitRuntimeRecord } from "./unit-runtime.js";
 import { clearParseCache } from "./files.js";
 import { parseRoadmap as parseLegacyRoadmap, parsePlan as parseLegacyPlan } from "./parsers-legacy.js";
 import { isDbAvailable, getTask, getSlice, getSliceTasks } from "./gsd-db.js";
@@ -621,50 +620,6 @@ export function reconcileMergeState(
     }
   }
   return true;
-}
-
-// ─── Self-Heal Runtime Records ────────────────────────────────────────────────
-
-/**
- * Self-heal: scan runtime records in .gsd/ and clear stale ones.
- * Clears dispatched records older than 1 hour (process crashed before
- * completing the unit). deriveState() handles re-derivation — no need
- * for completion key persistence here.
- */
-export async function selfHealRuntimeRecords(
-  base: string,
-  ctx: ExtensionContext,
-): Promise<void> {
-  try {
-    const { listUnitRuntimeRecords } = await import("./unit-runtime.js");
-    const records = listUnitRuntimeRecords(base);
-    let healed = 0;
-    const STALE_THRESHOLD_MS = 60 * 60 * 1000; // 1 hour
-    const now = Date.now();
-    for (const record of records) {
-      const { unitType, unitId } = record;
-
-      // Case 0 removed — roadmap checkbox auto-fix is no longer needed.
-      // With DB-as-truth, stale checkboxes are fixed by repairStaleRenders().
-
-      // Clear stale dispatched records (dispatched > 1h ago, process crashed)
-      const age = now - (record.startedAt ?? 0);
-      if (record.phase === "dispatched" && age > STALE_THRESHOLD_MS) {
-        clearUnitRuntimeRecord(base, unitType, unitId);
-        healed++;
-        continue;
-      }
-    }
-    if (healed > 0) {
-      ctx.ui.notify(
-        `Self-heal: cleared ${healed} stale runtime record(s).`,
-        "info",
-      );
-    }
-  } catch (e) {
-    // Non-fatal — self-heal should never block auto-mode start
-    void e;
-  }
 }
 
 // ─── Loop Remediation ─────────────────────────────────────────────────────────
