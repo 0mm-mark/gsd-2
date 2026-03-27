@@ -6,6 +6,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.55.0] - 2026-03-27
+
+### Added
+- colorized headless verbose output with thinking, phases, cost, and durations (#2886)
+- headless text mode observability + skip UAT pause (#2867)
+
+### Fixed
+- **cli**: let gsd update bypass version mismatch gate (#2845)
+- **contracts**: add isWorkspaceEvent guard + close routeLiveInteractionEvent exhaustiveness gap (#2878)
+- **gsd**: use project root for prior-slice dispatch guard (#2863)
+- **gsd**: include queue context in milestone planning prompts (#2846)
+- detect monorepo roots in project discovery to prevent workspace fragmentation (#2849)
+- **bg-shell**: recover from deleted cwd in timers (#2850)
+- **gsd**: enable dynamic routing without models section (#2851)
+- **interactive**: fully remove providers from /providers (#2852)
+
 ## [2.54.0] - 2026-03-27
 
 ### Added
@@ -2079,7 +2095,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - License updated to MIT
 
-[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.54.0...HEAD
+[Unreleased]: https://github.com/gsd-build/gsd-2/compare/v2.55.0...HEAD
+[2.55.0]: https://github.com/gsd-build/gsd-2/compare/v2.54.0...v2.55.0
 [2.54.0]: https://github.com/gsd-build/gsd-2/compare/v2.53.0...v2.54.0
 [2.53.0]: https://github.com/gsd-build/gsd-2/compare/v2.52.0...v2.53.0
 [2.52.0]: https://github.com/gsd-build/gsd-2/compare/v2.51.0...v2.52.0
