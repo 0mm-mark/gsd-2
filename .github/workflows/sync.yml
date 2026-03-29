@@ -1,0 +1,30 @@
+name: Upstream Synchronize
+
+on:
+  schedule:
+  - cron:  "0 */3 * * *"
+  workflow_dispatch:
+
+# Opt into Node.js 24 now to avoid the June 2026 force-migration
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  
+permissions:
+  contents: write
+  
+jobs:
+  repo-sync:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        persist-credentials: true
+        token: ${{ secrets.SYNC_TOKEN }}
+    - name: repo-sync
+      uses: repo-sync/github-sync@v2
+      with:
+        source_repo: "gsd-build/gsd-2"
+        source_branch: "main"
+        destination_branch: "main"
+        sync_tags: "true"
+        github_token: ${{ secrets.SYNC_TOKEN }}
