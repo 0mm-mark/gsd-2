@@ -721,6 +721,8 @@ export async function runGuards(
   // ── Stop/Backtrack directive guard (#3487) ──
   // Check for unexecuted stop or backtrack captures BEFORE dispatching any unit.
   // This ensures user "halt" directives are honored immediately.
+  // IMPORTANT: Fail-closed — any exception during stop handling still breaks the loop
+  // to ensure user halt intent is never silently dropped.
   try {
     const { loadStopCaptures, markCaptureExecuted } = await import("../captures.js");
     const stopCaptures = loadStopCaptures(s.basePath);
@@ -737,12 +739,10 @@ export async function runGuards(
         basename(s.originalBasePath || s.basePath),
       );
 
-      // Mark all stop/backtrack captures as executed so they don't re-fire
-      for (const cap of stopCaptures) {
-        markCaptureExecuted(s.basePath, cap.id);
-      }
+      // Pause first — ensures auto-mode stops even if later steps fail
+      await deps.pauseAuto(ctx, pi);
 
-      // For backtrack captures, write the backtrack trigger before pausing
+      // For backtrack captures, write the backtrack trigger after pausing
       if (isBacktrack) {
         try {
           const { executeBacktrack } = await import("../triage-resolution.js");
@@ -752,12 +752,19 @@ export async function runGuards(
         }
       }
 
-      await deps.pauseAuto(ctx, pi);
+      // Mark captures as executed only after successful pause/transition
+      for (const cap of stopCaptures) {
+        markCaptureExecuted(s.basePath, cap.id);
+      }
+
       debugLog("autoLoop", { phase: "exit", reason: isBacktrack ? "user-backtrack" : "user-stop" });
       return { action: "break", reason: isBacktrack ? "user-backtrack" : "user-stop" };
     }
   } catch (e) {
+    // Fail-closed: if anything in the stop guard throws, break the loop
+    // rather than silently continuing and dropping user halt intent
     debugLog("guards", { phase: "stop-guard-error", error: String(e) });
+    return { action: "break", reason: "stop-guard-error" };
   }
 
   // Budget ceiling guard
@@ -1261,7 +1268,9 @@ export async function runUnitPhase(
         blockers: [],
         nextSteps: [],
       });
-    } catch { /* non-fatal — anchor is advisory */ }
+    } catch (err) { /* non-fatal — anchor is advisory */
+      process.stderr.write(`gsd [phases]: phase anchor failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
   }
 
   deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "unit-end", data: { unitType, unitId, status: unitResult.status, artifactVerified, ...(unitResult.errorContext ? { errorContext: unitResult.errorContext } : {}) }, causedBy: { flowId: ic.flowId, seq: unitStartSeq } });
@@ -1384,3 +1393,4 @@ export async function runFinalize(
 
   return { action: "next", data: undefined as void };
 }
+
