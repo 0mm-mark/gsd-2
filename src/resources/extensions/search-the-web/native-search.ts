@@ -13,6 +13,8 @@ export const BRAVE_TOOL_NAMES = ["search-the-web", "search_and_read"];
 /** All custom search tool names that should be disabled when native search is active */
 export const CUSTOM_SEARCH_TOOL_NAMES = ["search-the-web", "search_and_read", "google_search"];
 
+export const XAI_DISABLED_TOOLS = [...CUSTOM_SEARCH_TOOL_NAMES, "resolve_library", "get_library_docs"];
+
 /** Thinking block types that require signature validation by the API */
 const THINKING_TYPES = new Set(["thinking", "redacted_thinking"]);
 
@@ -82,6 +84,7 @@ export function stripThinkingFromHistory(
  */
 export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic: () => boolean } {
   let isAnthropicProvider = false;
+let isXaiProvider = false;
   let modelSelectFired = false;
 
   // Session-level native search counter (#1309).
@@ -95,6 +98,8 @@ export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic:
     modelSelectFired = true;
     const wasAnthropic = isAnthropicProvider;
     isAnthropicProvider = event.model.provider === "anthropic";
+const wasXai = isXaiProvider;
+isXaiProvider = event.model.provider === "xai" || event.model.name?.startsWith("grok-");
 
     const hasBrave = !!process.env.BRAVE_API_KEY;
 
@@ -116,7 +121,20 @@ export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic:
       }
     }
 
-    // Show provider-aware diagnostics on first selection or provider change
+    if (isXaiProvider) {
+  const active = pi.getActiveTools();
+  pi.setActiveTools(
+    active.filter((t: string) => !XAI_DISABLED_TOOLS.includes(t))
+  );
+} else if (!isXaiProvider && wasXai) {
+  const active = pi.getActiveTools();
+  const toAdd = XAI_DISABLED_TOOLS.filter((t) => !active.includes(t));
+  if (toAdd.length > 0) {
+    pi.setActiveTools([...active, ...toAdd]);
+  }
+}
+
+// Show provider-aware diagnostics on first selection or provider change
     if (isAnthropicProvider && !preferBraveSearch() && !wasAnthropic && event.source !== "restore") {
       ctx.ui.notify("Native Anthropic web search active", "info");
     } else if (isAnthropicProvider && preferBraveSearch() && !wasAnthropic && event.source !== "restore") {
@@ -139,16 +157,30 @@ export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic:
     // the model_select flag, then to the model name heuristic (last resort).
     // The model name heuristic is needed for session restores where
     // modelsAreEqual suppresses model_select AND the SDK doesn't pass model.
-    const eventModel = event.model as { provider: string } | undefined;
+    const eventModel = event.model as { provider: string; name?: string } | undefined;
     let isAnthropic: boolean;
+    let isXai: boolean = false;
     if (eventModel?.provider) {
       isAnthropic = eventModel.provider === "anthropic";
+      isXai = eventModel.provider === "xai" || (eventModel.name?.startsWith("grok-"));
     } else if (modelSelectFired) {
       isAnthropic = isAnthropicProvider;
+      isXai = isXaiProvider;
     } else {
       const modelName = typeof payload.model === "string" ? payload.model : "";
       isAnthropic = modelName.startsWith("claude-");
+      isXai = modelName.startsWith("grok-");
     }
+
+    if (isXai) {
+      if (!Array.isArray(payload.tools)) payload.tools = [];
+      let tools = payload.tools as Array<Record<string, unknown>>;
+      tools = tools.filter(
+        (t) => !XAI_DISABLED_TOOLS.includes(t.name as string)
+      );
+      payload.tools = tools;
+    }
+
     if (!isAnthropic) return;
 
     // Strip thinking blocks from history to avoid signature validation errors

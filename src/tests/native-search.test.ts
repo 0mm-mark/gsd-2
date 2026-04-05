@@ -5,6 +5,7 @@ import {
   stripThinkingFromHistory,
   BRAVE_TOOL_NAMES,
   CUSTOM_SEARCH_TOOL_NAMES,
+  XAI_DISABLED_TOOLS,
   MAX_NATIVE_SEARCHES_PER_SESSION,
   type NativeSearchPI,
 } from "../resources/extensions/search-the-web/native-search.ts";
@@ -380,6 +381,55 @@ test("model_select re-enables Brave tools when switching away from Anthropic", a
   assert.ok(active.includes("search-the-web"), "search-the-web should be re-enabled");
   assert.ok(active.includes("search_and_read"), "search_and_read should be re-enabled");
   assert.ok(active.includes("google_search"), "google_search should be re-enabled");
+});
+
+test("model_select disables XAI_DISABLED_TOOLS when xAI model is selected", async () => {
+  const pi = createMockPI();
+  registerNativeSearchHooks(pi);
+
+  await pi.fire("model_select", {
+    type: "model_select",
+    model: { provider: "xai", name: "grok-beta" },
+    previousModel: undefined,
+    source: "set",
+  });
+
+  const active = pi.getActiveTools();
+  for (const tool of XAI_DISABLED_TOOLS) {
+    assert.ok(!active.includes(tool), `${tool} should be disabled for xAI`);
+  }
+  assert.ok(active.includes("bash"), "non-conflicting tools should remain");
+});
+
+test("model_select re-enables XAI_DISABLED_TOOLS when switching away from xAI", async () => {
+  const pi = createMockPI();
+  registerNativeSearchHooks(pi);
+
+  // select xAI — disables
+  await pi.fire("model_select", {
+    type: "model_select",
+    model: { provider: "xai", name: "grok-beta" },
+    previousModel: undefined,
+    source: "set",
+  });
+
+  let active = pi.getActiveTools();
+  for (const tool of XAI_DISABLED_TOOLS) {
+    assert.ok(!active.includes(tool), `should disable ${tool} on xAI`);
+  }
+
+  // switch away — re-enables
+  await pi.fire("model_select", {
+    type: "model_select",
+    model: { provider: "openai", name: "gpt-4o" },
+    previousModel: { provider: "xai", name: "grok-beta" },
+    source: "set",
+  });
+
+  active = pi.getActiveTools();
+  for (const tool of XAI_DISABLED_TOOLS) {
+    assert.ok(active.includes(tool), `${tool} should be re-enabled after leaving xAI`);
+  }
 });
 
 test("model_select shows 'Native Anthropic web search active' for Anthropic provider", async () => {
