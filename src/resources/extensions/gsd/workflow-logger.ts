@@ -174,17 +174,22 @@ export function summarizeLogs(): string | null {
 
 /**
  * Format entries for display (used by auto-loop post-unit notification).
- * Note: context fields are not included in the formatted output.
+ * Includes key context fields (file paths, commands) when present.
  */
 export function formatForNotification(entries: readonly LogEntry[]): string {
   if (entries.length === 0) return "";
-  if (entries.length === 1) {
-    const e = entries[0];
-    return `[${e.component}] ${e.message}`;
-  }
-  return entries
-    .map((e) => `[${e.component}] ${e.message}`)
-    .join("\n");
+  return entries.map((e) => {
+    let line = `[${e.component}] ${e.message}`;
+    if (e.context) {
+      const ctxParts = Object.entries(e.context)
+        .filter(([k]) => k !== "error") // error is redundant with message
+        .map(([k, v]) => v.includes(",") ? `${k}: "${v}"` : `${k}: ${v}`);
+      if (ctxParts.length > 0) {
+        line += ` (${ctxParts.join(", ")})`;
+      }
+    }
+    return line;
+  }).join("\n");
 }
 
 /**

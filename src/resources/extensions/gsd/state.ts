@@ -259,6 +259,7 @@ export async function deriveState(basePath: string): Promise<GSDState> {
       _telemetry.markdownDeriveCount++;
     }
   } else {
+    logWarning("state", "DB unavailable — using filesystem state derivation (degraded mode)");
     result = await _deriveStateImpl(basePath);
     _telemetry.markdownDeriveCount++;
   }

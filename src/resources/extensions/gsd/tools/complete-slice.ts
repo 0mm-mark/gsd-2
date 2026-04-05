@@ -292,13 +292,11 @@ export async function handleCompleteSlice(
     // Toggle roadmap checkbox via renderer module
     const roadmapToggled = await renderRoadmapCheckboxes(basePath, params.milestoneId);
     if (!roadmapToggled) {
-      process.stderr.write(
-        `gsd-db: complete_slice — could not find roadmap for ${params.milestoneId}, skipping checkbox toggle\n`,
-      );
+      logWarning("tool", `complete_slice — could not find roadmap for ${params.milestoneId}, skipping checkbox toggle`);
     }
   } catch (renderErr) {
     // Disk render failed — roll back DB status so state stays consistent
-    logWarning("tool", `complete_slice — disk render failed, rolling back DB status: ${(renderErr as Error).message}`);
+    logWarning("tool", `complete_slice — disk render failed for ${params.milestoneId}/${params.sliceId}, rolling back DB status`, { error: (renderErr as Error).message });
     updateSliceStatus(params.milestoneId, params.sliceId, 'pending');
     invalidateStateCache();
     return { error: `disk render failed: ${(renderErr as Error).message}` };
@@ -325,7 +323,7 @@ export async function handleCompleteSlice(
       trigger_reason: params.triggerReason,
     });
   } catch (hookErr) {
-    logWarning("tool", `complete-slice post-mutation hook warning: ${(hookErr as Error).message}`);
+    logWarning("tool", `complete-slice post-mutation hook failed for ${params.milestoneId}/${params.sliceId}`, { error: (hookErr as Error).message });
   }
 
   return {

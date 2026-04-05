@@ -33,6 +33,7 @@ import {
 import {
   verifyExpectedArtifact,
   resolveExpectedArtifactPath,
+  diagnoseExpectedArtifact,
 } from "./auto-recovery.js";
 import { regenerateIfMissing } from "./workflow-projections.js";
 import { syncStateToProjectRoot } from "./auto-worktree.js";
@@ -476,8 +477,9 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
         // db_unavailable so the artifact was never written. Retrying would
         // produce an infinite re-dispatch loop (#2517).
         debugLog("postUnit", { phase: "artifact-verify-skip-db-unavailable", unitType: s.currentUnit.type, unitId: s.currentUnit.id });
+        const dbSkipDiag = diagnoseExpectedArtifact(s.currentUnit.type, s.currentUnit.id, s.basePath);
         ctx.ui.notify(
-          `Artifact missing for ${s.currentUnit.type} ${s.currentUnit.id} but DB is unavailable — skipping retry to avoid loop (#2517)`,
+          `Artifact missing for ${s.currentUnit.type} ${s.currentUnit.id} — DB unavailable, skipping retry.${dbSkipDiag ? ` Expected: ${dbSkipDiag}` : ""}`,
           "error",
         );
       } else if (!triggerArtifactVerified) {
@@ -486,14 +488,15 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
           const retryKey = `${s.currentUnit.type}:${s.currentUnit.id}`;
           const attempt = (s.verificationRetryCount.get(retryKey) ?? 0) + 1;
           s.verificationRetryCount.set(retryKey, attempt);
+          const retryDiag = diagnoseExpectedArtifact(s.currentUnit.type, s.currentUnit.id, s.basePath);
           s.pendingVerificationRetry = {
             unitId: s.currentUnit.id,
-            failureContext: `Artifact verification failed: expected artifact for ${s.currentUnit.type} "${s.currentUnit.id}" was not found on disk after unit execution (attempt ${attempt}).`,
+            failureContext: `Artifact verification failed: expected artifact for ${s.currentUnit.type} "${s.currentUnit.id}" was not found on disk after unit execution (attempt ${attempt}).${retryDiag ? ` Expected: ${retryDiag}` : ""}`,
             attempt,
           };
           debugLog("postUnit", { phase: "artifact-verify-retry", unitType: s.currentUnit.type, unitId: s.currentUnit.id, attempt });
           ctx.ui.notify(
-            `Artifact missing for ${s.currentUnit.type} ${s.currentUnit.id} — retrying (attempt ${attempt})`,
+            `Artifact missing for ${s.currentUnit.type} ${s.currentUnit.id} — retrying (attempt ${attempt}).${retryDiag ? ` Expected: ${retryDiag}` : ""}`,
             "warning",
           );
           return "retry";
