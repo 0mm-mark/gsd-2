@@ -31,7 +31,7 @@ import { existsSync, cpSync } from "node:fs";
 import { logWarning, logError } from "../workflow-logger.js";
 import { gsdRoot } from "../paths.js";
 import { atomicWriteSync } from "../atomic-write.js";
-import { verifyExpectedArtifact } from "../auto-recovery.js";
+import { verifyExpectedArtifact, diagnoseExpectedArtifact, buildLoopRemediationSteps } from "../auto-recovery.js";
 import { writeUnitRuntimeRecord } from "../unit-runtime.js";
 
 // ─── generateMilestoneReport ──────────────────────────────────────────────────
@@ -182,7 +182,7 @@ export async function runPreDispatch(
     }
     if (!healthGate.proceed) {
       ctx.ui.notify(
-        healthGate.reason ?? "Pre-dispatch health check failed.",
+        healthGate.reason || "Pre-dispatch health check failed — run /gsd doctor for details.",
         "error",
       );
       await deps.pauseAuto(ctx, pi);
@@ -628,14 +628,16 @@ export async function runDispatch(
           unitId,
           reason: stuckSignal.reason,
         });
+        const stuckDiag = diagnoseExpectedArtifact(unitType, unitId, s.basePath);
+        const stuckRemediation = buildLoopRemediationSteps(unitType, unitId, s.basePath);
+        const stuckParts = [`Stuck on ${unitType} ${unitId} — ${stuckSignal.reason}.`];
+        if (stuckDiag) stuckParts.push(`Expected: ${stuckDiag}`);
+        if (stuckRemediation) stuckParts.push(`To recover:\n${stuckRemediation}`);
+        ctx.ui.notify(stuckParts.join(" "), "error");
         await deps.stopAuto(
           ctx,
           pi,
           `Stuck: ${stuckSignal.reason}`,
-        );
-        ctx.ui.notify(
-          `Stuck on ${unitType} ${unitId} — ${stuckSignal.reason}. The expected artifact was not written.`,
-          "error",
         );
         return { action: "break", reason: "stuck-detected" };
       }

@@ -196,19 +196,30 @@ export async function runPostUnitVerification(
         failureContext: formatFailureContext(result),
         attempt: nextAttempt,
       };
+      const failedCmds = result.checks
+        .filter((c) => c.exitCode !== 0)
+        .map((c) => c.command);
+      const cmdSummary = failedCmds.length <= 3
+        ? failedCmds.join(", ")
+        : `${failedCmds.slice(0, 3).join(", ")}... and ${failedCmds.length - 3} more`;
       ctx.ui.notify(
-        `Verification failed — auto-fix attempt ${nextAttempt}/${maxRetries}`,
+        `Verification failed (${cmdSummary}) — auto-fix attempt ${nextAttempt}/${maxRetries}`,
         "warning",
       );
       // Return "retry" — the autoLoop while loop will re-iterate with the retry context
       return "retry";
     } else {
       // Gate failed, retries exhausted
-      const exhaustedAttempt = attempt + 1;
       s.verificationRetryCount.delete(s.currentUnit.id);
       s.pendingVerificationRetry = null;
+      const exhaustedFails = result.checks
+        .filter((c) => c.exitCode !== 0)
+        .map((c) => c.command);
+      const exhaustedSummary = exhaustedFails.length <= 3
+        ? exhaustedFails.join(", ")
+        : `${exhaustedFails.slice(0, 3).join(", ")}... and ${exhaustedFails.length - 3} more`;
       ctx.ui.notify(
-        `Verification gate FAILED after ${exhaustedAttempt > maxRetries ? exhaustedAttempt - 1 : exhaustedAttempt} retries — pausing for human review`,
+        `Verification gate FAILED after ${attempt} ${attempt === 1 ? "retry" : "retries"} (${exhaustedSummary}) — pausing for human review`,
         "error",
       );
       await pauseAuto(ctx, pi);
