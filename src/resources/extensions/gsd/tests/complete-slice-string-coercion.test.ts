@@ -1,5 +1,4 @@
 // GSD Extension — String coercion regression tests for complete-slice/task tools
-// Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
 
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
