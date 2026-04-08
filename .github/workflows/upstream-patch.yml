@@ -41,32 +41,32 @@ jobs:
           echo "=== Current branch ==="
           git branch --show-current
 
-          # Switch to the branch we want to patch
+          # Switch to main (the branch we want to patch)
           git checkout main
 
           echo "=== Before cleanup ==="
-          ls -la patches/ 2>/dev/null || echo "No patches/ on main yet"
+          ls -la patches/ 2>/dev/null || echo "No patches/ on main"
 
-          # Remove any existing patches/ to guarantee a clean index
+          # Remove any stale patches/ on main
           rm -rf patches/
 
-          # Copy patches from sync (plain cp, no git operation → no dirty index)
-          cp -r ../patches ./
+          # Copy patches from the sync checkout (they are in the current tree)
+          cp -r .git/../patches ./   # safe way while still having sync files available
 
           echo "=== After copying patches ==="
           ls -la patches/
 
-          # Now apply the patch (index is clean)
+          # Apply the feature patch (index is now clean)
           git am --3way --ignore-whitespace patches/pluggable-orchestrator.patch || {
             echo "::error::Feature patch failed to apply."
             git am --abort
             exit 1
           }
 
-          # Force .mcp.json
+          # Force .mcp.json override
           cp patches/mcp.json .mcp.json
           git add .mcp.json
           git commit -m "chore: force .mcp.json override from patch (always wins)" || true
 
-          # Push
+          # Push the updated main
           git push origin main
