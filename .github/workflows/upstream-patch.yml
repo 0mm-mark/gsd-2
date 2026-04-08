@@ -1,0 +1,54 @@
+name: Upstream Patch
+
+on:
+  workflow_run:
+    workflows: ["Upstream Synchronize"]
+    types: [completed]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-pluggable-patches
+  cancel-in-progress: false
+
+jobs:
+  apply-patches:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main (full history)
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.SYNC_TOKEN }}
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch latest
+        run: git fetch --all --prune
+
+      - name: Apply feature patch (pluggable orchestrator)
+        run: |
+          git am --3way --ignore-whitespace patches/pluggable-orchestrator.patch || {
+            echo "::error::Feature patch failed to apply."
+            git am --abort
+            exit 1
+          }
+
+      - name: FORCE overwrite .mcp.json (your exact version always wins)
+        run: |
+          cp patches/mcp.json .mcp.json
+          git add .mcp.json
+          git commit -m "chore: force .mcp.json override from patch (always wins)" || true   # no-op if unchanged
+
+      - name: Push updated main
+        run: git push origin main
