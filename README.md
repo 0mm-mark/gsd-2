@@ -85,7 +85,7 @@ See the full [Changelog](./CHANGELOG.md) for details on every release.
 
 ## Documentation
 
-Full documentation is available at **[gsd.build](https://gsd.build)** (powered by Mintlify) and in the [`docs/`](./docs/) directory:
+Full documentation is available in the [`docs/`](./docs/) directory:
 
 - **[Getting Started](./docs/getting-started.md)** — install, first run, basic usage
 - **[Auto Mode](./docs/auto-mode.md)** — autonomous execution deep-dive
