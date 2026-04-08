@@ -1,4 +1,4 @@
-name: Apply pluggable orchestrator patches to main
+name: Upstream Patch Main
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -75,5 +75,8 @@ jobs:
           git add .mcp.json
           git commit -m "chore: force .mcp.json override from patch (always wins)" || true
 
+          # Pull latest changes from origin/main (prevents race condition / 128 on push)
+          git pull --rebase origin main || true
+          
           # Push
           git push origin main
