@@ -1,6 +1,5 @@
-name: Upstream Patch Main
+name: Apply pluggable orchestrator patches to main
 
-# Opt into Node.js 24 early to silence the deprecation warning
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
@@ -34,13 +33,21 @@ jobs:
           token: ${{ secrets.SYNC_TOKEN }}
           fetch-depth: 0
 
-      - name: Switch to main and apply patches
+      - name: Switch to main and prepare patches
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # Switch to the branch we want to patch
+          echo "=== Current branch and files ==="
+          git branch --show-current
+          ls -la patches/ || echo "patches/ not found!"
+
+          # Bring patches/ into the main branch's working tree
           git checkout main
+          git checkout sync -- patches/
+
+          echo "=== After bringing patches from sync ==="
+          ls -la patches/
 
           # Apply the feature patch
           git am --3way --ignore-whitespace patches/pluggable-orchestrator.patch || {
@@ -49,10 +56,10 @@ jobs:
             exit 1
           }
 
-          # Force overwrite .mcp.json
+          # Force .mcp.json
           cp patches/mcp.json .mcp.json
           git add .mcp.json
           git commit -m "chore: force .mcp.json override from patch (always wins)" || true
 
-          # Push the updated main
+          # Push
           git push origin main
