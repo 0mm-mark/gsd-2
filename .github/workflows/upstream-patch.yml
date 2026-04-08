@@ -1,4 +1,4 @@
-name: Apply pluggable orchestrator patches to main
+name: Upstream Patch Main
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -33,23 +33,30 @@ jobs:
           token: ${{ secrets.SYNC_TOKEN }}
           fetch-depth: 0
 
-      - name: Switch to main and prepare patches
+      - name: Switch to main and apply patches
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          echo "=== Current branch and files ==="
+          echo "=== Current branch ==="
           git branch --show-current
-          ls -la patches/ || echo "patches/ not found!"
 
-          # Bring patches/ into the main branch's working tree
+          # Switch to the branch we want to patch
           git checkout main
-          git checkout sync -- patches/
 
-          echo "=== After bringing patches from sync ==="
+          echo "=== Before cleanup ==="
+          ls -la patches/ 2>/dev/null || echo "No patches/ on main yet"
+
+          # Remove any existing patches/ to guarantee a clean index
+          rm -rf patches/
+
+          # Copy patches from sync (plain cp, no git operation → no dirty index)
+          cp -r ../patches ./
+
+          echo "=== After copying patches ==="
           ls -la patches/
 
-          # Apply the feature patch
+          # Now apply the patch (index is clean)
           git am --3way --ignore-whitespace patches/pluggable-orchestrator.patch || {
             echo "::error::Feature patch failed to apply."
             git am --abort
