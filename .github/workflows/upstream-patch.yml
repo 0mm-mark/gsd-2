@@ -35,29 +35,30 @@ jobs:
 
       - name: Switch to main and apply patches
         run: |
+          set -x   # show every command for debugging
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          echo "=== Current branch ==="
-          git branch --show-current
-
-          # Copy patches to a safe temporary location while still on sync
+          # Copy patches to /tmp while we are still on sync (guaranteed to exist)
           rm -rf /tmp/patches
           cp -r patches /tmp/patches
 
-          echo "=== Copied patches to /tmp ==="
+          echo "=== Patches copied to /tmp ==="
           ls -la /tmp/patches
 
-          # Switch to main
+          # Switch to main (the branch we actually want to patch)
           git checkout main
 
           echo "=== Before cleanup on main ==="
           ls -la patches/ 2>/dev/null || echo "No patches/ on main"
 
-          # Remove any stale patches/ on main
-          rm -rf patches/
+          # Guarantee completely clean main (eliminates race with upstream sync)
+          git fetch origin main
+          git reset --hard origin/main
 
-          # Copy from temp location
+          # Remove any stale patches/ and copy from temp
+          rm -rf patches/
           cp -r /tmp/patches ./patches
 
           echo "=== After copying patches to main ==="
@@ -75,8 +76,5 @@ jobs:
           git add .mcp.json
           git commit -m "chore: force .mcp.json override from patch (always wins)" || true
 
-          # Pull latest changes from origin/main (prevents race condition / 128 on push)
-          git pull --rebase origin main || true
-          
-          # Push
-          git push origin main
+          # Safe push (prevents overwriting someone else's push)
+          git push --force-with-lease origin main
