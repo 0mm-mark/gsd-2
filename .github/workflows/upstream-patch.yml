@@ -1,13 +1,16 @@
-name: Upstream Patch
+name: Patch Upstream
 
 on:
+  # Primary trigger: runs immediately after every successful upstream sync
   workflow_run:
     workflows: ["Upstream Synchronize"]
     types: [completed]
+
+  # Fallbacks (high-tempo upstream)
   push:
-    branches: [main]
+    branches: [sync]          # changed: workflows live on sync
   schedule:
-    - cron: '0 4 * * *'
+    - cron: '0 * * * *'       # hourly safety net
   workflow_dispatch:
 
 permissions:
@@ -22,33 +25,43 @@ jobs:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout main (full history)
+      - name: Checkout sync branch (to get patches/ and workflows)
         uses: actions/checkout@v4
         with:
+          ref: sync
           token: ${{ secrets.SYNC_TOKEN }}
           fetch-depth: 0
 
+      - name: Checkout main branch (the one we will patch)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.SYNC_TOKEN }}
+          fetch-depth: 0
+          path: main-worktree   # checkout into a subdir so we don't mix branches
+
       - name: Configure Git
+        working-directory: main-worktree
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Fetch latest
-        run: git fetch --all --prune
-
-      - name: Apply feature patch (pluggable orchestrator)
+      - name: Apply feature patch
+        working-directory: main-worktree
         run: |
-          git am --3way --ignore-whitespace patches/pluggable-orchestrator.patch || {
+          git am --3way --ignore-whitespace ../patches/pluggable-orchestrator.patch || {
             echo "::error::Feature patch failed to apply."
             git am --abort
             exit 1
           }
 
       - name: FORCE overwrite .mcp.json (your exact version always wins)
+        working-directory: main-worktree
         run: |
-          cp patches/mcp.json .mcp.json
+          cp ../patches/mcp.json .mcp.json
           git add .mcp.json
-          git commit -m "chore: force .mcp.json override from patch (always wins)" || true   # no-op if unchanged
+          git commit -m "chore: force .mcp.json override from patch (always wins)" || true
 
       - name: Push updated main
+        working-directory: main-worktree
         run: git push origin main
