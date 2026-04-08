@@ -934,7 +934,7 @@ function buildResolver(): WorktreeResolver {
  * Build the LoopDeps object from auto.ts private scope.
  * This bundles all private functions that autoLoop needs without exporting them.
  */
-function buildLoopDeps(): LoopDeps {
+export function buildLoopDeps(): LoopDeps {
   // Initialize the unified rule registry with converted dispatch rules.
   // Must happen before LoopDeps is assembled so facade functions
   // (resolveDispatch, runPreDispatchHooks, etc.) delegate to the registry.
@@ -1216,7 +1216,7 @@ export async function startAuto(
     );
     logCmuxEvent(loadEffectiveGSDPreferences()?.preferences, s.stepMode ? "Step-mode resumed." : "Auto-mode resumed.", "progress");
 
-    await autoLoop(ctx, pi, s, buildLoopDeps());
+    await (await import('../../../experimental/orchestrator-factory.js')).createOrchestrator({ctx, pi}).then(o => o.run(s, {ctx, pi}));
     cleanupAfterLoopExit(ctx);
     return;
   }
@@ -1248,7 +1248,7 @@ export async function startAuto(
   logCmuxEvent(loadEffectiveGSDPreferences()?.preferences, requestedStepMode ? "Step-mode started." : "Auto-mode started.", "progress");
 
   // Dispatch the first unit
-  await autoLoop(ctx, pi, s, buildLoopDeps());
+  await (await import('../../../experimental/orchestrator-factory.js')).createOrchestrator({ctx, pi}).then(o => o.run(s, {ctx, pi}));
   cleanupAfterLoopExit(ctx);
 }
 
