@@ -302,7 +302,7 @@ jobs:
                   git checkout --ours -- "$file"
                 fi
                 git add "$file"
-                ((AUTO_RESOLVED++))
+                AUTO_RESOLVED=$((AUTO_RESOLVED + 1))   # ← FIXED: safe increment under set -e
               else
                 echo "→ Leaving conflict in $file (outside allowed files - requires manual review)"
                 HAD_DISALLOWED_CONFLICT=1
