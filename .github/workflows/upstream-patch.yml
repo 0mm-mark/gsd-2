@@ -290,6 +290,7 @@ jobs:
             fi
 
             AUTO_RESOLVED=0
+            HAD_DISALLOWED_CONFLICT=0
             for file in $CONFLICTED_FILES; do
               if [[ "$file" == src/experimental/* || "$file" == .mcp.json ]]; then
                 if [[ "$file" == .mcp.json ]]; then
@@ -303,14 +304,17 @@ jobs:
                 ((AUTO_RESOLVED++))
               else
                 echo "→ Leaving conflict in $file (outside allowed files - requires manual review)"
+                HAD_DISALLOWED_CONFLICT=1
               fi
             done
 
-            # Check if any conflicts remain unresolved
-            REMAINING_CONFLICTS=$(git ls-files -u | wc -l)
-            if [ "$REMAINING_CONFLICTS" -gt 0 ]; then
+            echo "=== Debug: current status after resolution ==="
+            git status --porcelain
+
+            # Check for any disallowed conflicts
+            if [ "$HAD_DISALLOWED_CONFLICT" -eq 1 ]; then
               echo "::error::Unresolved merge conflicts remain outside allowed files. Manual resolution required."
-              echo "Conflicted files: $(git ls-files -u | awk '{print $4}' | sort -u | tr '\n' ' ')"
+              echo "Conflicted files: $(git diff --name-only --diff-filter=U | tr '\n' ' ')"
               exit 1
             fi
 
