@@ -1,10 +1,19 @@
 name: Release Experimental gsd-pi (GitHub Asset)
 
 on:
+# 1. MANUAL TRIGGER (this is what you asked for)
+  workflow_dispatch:
+    inputs:
+      description:
+        description: 'Optional note about this experimental release'
+        required: false
+        default: 'Manual release after sync-experimental-branch'
+
+  # 2. OPTIONAL: Automatic on push to experimental (you can delete this block if you want *only* manual)
   push:
     branches:
       - experimental
-
+      
 permissions:
   contents: write   # required to create/update releases and upload assets
 
