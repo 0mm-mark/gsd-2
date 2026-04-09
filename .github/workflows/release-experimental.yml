@@ -44,19 +44,23 @@ jobs:
       - name: Pack the package
         run: npm pack
 
+      - name: Rename to fixed, version-independent name
+        run: mv gsd-pi-*.tgz gsd-pi-experimental.tgz
+
       - name: Create / update GitHub Release with pre-built .tgz
         uses: softprops/action-gh-release@v2
         with:
           tag_name: experimental
           name: Experimental Build (gsd-pi)
           body: |
-            **Automatic experimental build** of `gsd-pi` from the `experimental` branch.
+            **Experimental build** of `gsd-pi` from the `experimental` branch.
 
-            Triggered after `sync-experimental-branch` job completed successfully.
-            Pre-built package — ready for Docker / global install.
+            ${{ github.event_name == 'workflow_dispatch' && 'Manually triggered' || 'Automatically triggered after sync' }}
+
+            Release notes: ${{ inputs.description || 'No description provided' }}
           draft: false
           prerelease: true
-          files: gsd-pi-*.tgz
-          replace: true   # updates the existing "experimental" release if it already exists
+          files: gsd-pi-experimental.tgz   # ← fixed name
+          replace: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
