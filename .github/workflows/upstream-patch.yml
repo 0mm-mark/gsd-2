@@ -233,3 +233,92 @@ jobs:
           git push origin "$PATCHED_TAG"
 
           echo "=== Successfully created patched tag $PATCHED_TAG from $LATEST_TAG ==="
+
+  sync-experimental-branch:
+    needs: create-patched-e-tag
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sync branch (contains patches/)
+        uses: actions/checkout@v4
+        with:
+          ref: sync
+          token: ${{ secrets.SYNC_TOKEN }}
+          fetch-depth: 0
+
+      - name: Merge latest patched e-tag into experimental branch (auto-resolve src/experimental/)
+        run: |
+          set -x   # show every command for debugging
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Fetch everything including all tags
+          git fetch origin --tags --force --prune
+
+          # Find the most recent *patched* tag (ends with e, version-sorted)
+          LATEST_E_TAG=$(git tag --sort=-v:refname | grep -E 'e$' | head -n 1)
+          if [ -z "$LATEST_E_TAG" ]; then
+            echo "No patched e-tag found yet. Skipping."
+            exit 0
+          fi
+          echo "=== Latest patched tag: $LATEST_E_TAG ==="
+
+          # Switch to (or create) experimental branch
+          git checkout -B experimental origin/experimental 2>/dev/null || git checkout -B experimental "$LATEST_E_TAG"
+
+          # Idempotency: if experimental is already at or ahead of the latest e-tag, skip
+          if git merge-base --is-ancestor "$LATEST_E_TAG" HEAD; then
+            echo "=== experimental branch is already up-to-date with $LATEST_E_TAG. Skipping (idempotent). ==="
+            exit 0
+          fi
+
+          echo "=== Merging $LATEST_E_TAG into experimental (auto-resolve src/experimental/) ==="
+
+          # Attempt the merge
+          if git merge --no-ff --no-edit "$LATEST_E_TAG"; then
+            echo "=== Clean merge completed (no conflicts) ==="
+          else
+            echo "=== Merge produced conflicts. Auto-resolving only inside src/experimental/ ==="
+
+            # Find all conflicted (unmerged) files
+            CONFLICTED_FILES=$(git ls-files -u | awk '{print $4}' | sort -u || true)
+
+            if [ -z "$CONFLICTED_FILES" ]; then
+              echo "No conflicted files detected (Git state may be inconsistent). Aborting."
+              exit 1
+            fi
+
+            AUTO_RESOLVED=0
+            for file in $CONFLICTED_FILES; do
+              if [[ "$file" == src/experimental/* ]]; then
+                echo "→ Auto-resolving $file (experimental branch wins)"
+                git checkout --ours -- "$file"
+                git add "$file"
+                ((AUTO_RESOLVED++))
+              else
+                echo "→ Leaving conflict in $file (outside src/experimental/ - requires manual review)"
+              fi
+            done
+
+            # Check if any conflicts remain unresolved
+            REMAINING_CONFLICTS=$(git ls-files -u | wc -l)
+            if [ "$REMAINING_CONFLICTS" -gt 0 ]; then
+              echo "::error::Unresolved merge conflicts remain outside src/experimental/. Manual resolution required."
+              echo "Conflicted files: $(git ls-files -u | awk '{print $4}' | sort -u | tr '\n' ' ')"
+              exit 1
+            fi
+
+            echo "=== Successfully auto-resolved $AUTO_RESOLVED conflict(s) in src/experimental/ ==="
+
+            # Complete the merge commit
+            git commit --no-edit || {
+              echo "::error::Failed to commit the auto-resolved merge."
+              exit 1
+            }
+          fi
+
+          # Safe push (never force on a dev branch)
+          git push origin experimental
+
+          echo "=== Successfully updated experimental branch with $LATEST_E_TAG ==="
