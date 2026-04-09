@@ -293,7 +293,7 @@ jobs:
             HAD_DISALLOWED_CONFLICT=0
 
             for file in $CONFLICTED_FILES; do
-              if [[ "$file" == src/experimental/* || "$file" == .mcp.json ]]; then
+              if [[ "$file" == src/experimental/* || "$file" == .mcp.json || "$file" == tsconfig.resources.json ]]; then
                 if [[ "$file" == .mcp.json ]]; then
                   echo "→ Auto-resolving $file (patched e-tag version wins - 'always wins' policy)"
                   git checkout --theirs -- "$file"
