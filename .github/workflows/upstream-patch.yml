@@ -1,4 +1,4 @@
-name: Upstream Patch Main
+name: Upstream Patch Main and Tag
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -163,7 +163,7 @@ jobs:
           token: ${{ secrets.SYNC_TOKEN }}
           fetch-depth: 0
 
-      - name: Apply patches to latest tag and create vX.Y.Ze tag
+      - name: Apply patches to latest upstream tag and create vX.Y.Ze tag
         run: |
           set -x   # show every command for debugging
 
@@ -172,7 +172,7 @@ jobs:
 
           # Copy patches to /tmp while we are still on sync
           rm -rf /tmp/patches
-          cp -r patches /tmp/patches
+          cp -rf patches /tmp/patches
 
           echo "=== Patches copied to /tmp ==="
           ls -la /tmp/patches
@@ -180,10 +180,10 @@ jobs:
           # Fetch all tags (and prune deleted ones)
           git fetch origin --tags --force --prune
 
-          # Determine the most recent tag (version-sort descending)
-          LATEST_TAG=$(git tag --sort=-v:refname | head -n 1)
+          # Determine the most recent *upstream* tag (exclude our own patched *e tags)
+          LATEST_TAG=$(git tag --sort=-v:refname | grep -v 'e$' | head -n 1)
           if [ -z "$LATEST_TAG" ]; then
-            echo "No tags found in the repository. Skipping."
+            echo "No upstream tags found (or all were patched). Skipping."
             exit 0
           fi
           echo "=== Most recent upstream tag: $LATEST_TAG ==="
@@ -191,9 +191,9 @@ jobs:
           PATCHED_TAG="${LATEST_TAG}e"
           echo "=== Target patched tag: $PATCHED_TAG ==="
 
-          # Idempotency check — if the e-tag already exists, do nothing
-          if git tag --list | grep -q "^${PATCHED_TAG}$"; then
-            echo "=== Patched tag $PATCHED_TAG already exists. Skipping (idempotent). ==="
+          # Idempotency check against REMOTE (most robust — survives any local state)
+          if git ls-remote --tags origin | grep -q "refs/tags/${PATCHED_TAG}$"; then
+            echo "=== Patched tag $PATCHED_TAG already exists remotely. Skipping (idempotent). ==="
             exit 0
           fi
 
@@ -205,7 +205,7 @@ jobs:
 
           # Remove any stale patches/ and copy fresh ones from temp
           rm -rf patches/
-          cp -r /tmp/patches ./patches
+          cp -rf /tmp/patches ./patches
 
           echo "=== After copying patches ==="
           ls -la patches/
@@ -219,7 +219,7 @@ jobs:
 
           # Force .mcp.json override (safe if file is missing on older tags)
           if [ -f patches/mcp.json ]; then
-            cp patches/mcp.json .mcp.json
+            cp -f patches/mcp.json .mcp.json
             git add .mcp.json
             git commit -m "chore: force .mcp.json override from patch (always wins)" || true
           fi
