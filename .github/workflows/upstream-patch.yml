@@ -246,7 +246,7 @@ jobs:
           token: ${{ secrets.SYNC_TOKEN }}
           fetch-depth: 0
 
-      - name: Merge latest patched e-tag into experimental branch (auto-resolve src/experimental/)
+      - name: Merge latest patched e-tag into experimental branch (auto-resolve src/experimental/ + .mcp.json)
         run: |
           set -x   # show every command for debugging
 
@@ -273,13 +273,13 @@ jobs:
             exit 0
           fi
 
-          echo "=== Merging $LATEST_E_TAG into experimental (auto-resolve src/experimental/) ==="
+          echo "=== Merging $LATEST_E_TAG into experimental (auto-resolve src/experimental/ + .mcp.json) ==="
 
           # Attempt the merge
           if git merge --no-ff --no-edit "$LATEST_E_TAG"; then
             echo "=== Clean merge completed (no conflicts) ==="
           else
-            echo "=== Merge produced conflicts. Auto-resolving only inside src/experimental/ ==="
+            echo "=== Merge produced conflicts. Auto-resolving allowed files ==="
 
             # Find all conflicted (unmerged) files
             CONFLICTED_FILES=$(git ls-files -u | awk '{print $4}' | sort -u || true)
@@ -291,25 +291,30 @@ jobs:
 
             AUTO_RESOLVED=0
             for file in $CONFLICTED_FILES; do
-              if [[ "$file" == src/experimental/* ]]; then
-                echo "→ Auto-resolving $file (experimental branch wins)"
-                git checkout --ours -- "$file"
+              if [[ "$file" == src/experimental/* || "$file" == .mcp.json ]]; then
+                if [[ "$file" == .mcp.json ]]; then
+                  echo "→ Auto-resolving $file (patched e-tag version wins - 'always wins' policy)"
+                  git checkout --theirs -- "$file"
+                else
+                  echo "→ Auto-resolving $file (experimental branch wins)"
+                  git checkout --ours -- "$file"
+                fi
                 git add "$file"
                 ((AUTO_RESOLVED++))
               else
-                echo "→ Leaving conflict in $file (outside src/experimental/ - requires manual review)"
+                echo "→ Leaving conflict in $file (outside allowed files - requires manual review)"
               fi
             done
 
             # Check if any conflicts remain unresolved
             REMAINING_CONFLICTS=$(git ls-files -u | wc -l)
             if [ "$REMAINING_CONFLICTS" -gt 0 ]; then
-              echo "::error::Unresolved merge conflicts remain outside src/experimental/. Manual resolution required."
+              echo "::error::Unresolved merge conflicts remain outside allowed files. Manual resolution required."
               echo "Conflicted files: $(git ls-files -u | awk '{print $4}' | sort -u | tr '\n' ' ')"
               exit 1
             fi
 
-            echo "=== Successfully auto-resolved $AUTO_RESOLVED conflict(s) in src/experimental/ ==="
+            echo "=== Successfully auto-resolved $AUTO_RESOLVED conflict(s) ==="
 
             # Complete the merge commit
             git commit --no-edit || {
