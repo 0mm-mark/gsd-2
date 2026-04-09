@@ -858,6 +858,7 @@ export async function buildDiscussMilestonePrompt(mid: string, midTitle: string,
     inlinedTemplates: discussTemplates,
     structuredQuestionsAvailable: "true",
     commitInstruction: "Do not commit planning artifacts — .gsd/ is managed externally.",
+    fastPathInstruction: "",
   });
 
   // If a CONTEXT-DRAFT.md exists, append it as seed material
@@ -994,10 +995,15 @@ export async function buildResearchSlicePrompt(
   const milestoneResearchPath = resolveMilestoneFile(base, mid, "RESEARCH");
   const milestoneResearchRel = relMilestoneFile(base, mid, "RESEARCH");
 
+  const sliceContextPath = resolveSliceFile(base, mid, sid, "CONTEXT");
+  const sliceContextRel = relSliceFile(base, mid, sid, "CONTEXT");
+
   const inlined: string[] = [];
   inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
   const contextInline = await inlineFileOptional(contextPath, contextRel, "Milestone Context");
   if (contextInline) inlined.push(contextInline);
+  const sliceCtxInline = await inlineFileOptional(sliceContextPath, sliceContextRel, "Slice Context (from discussion)");
+  if (sliceCtxInline) inlined.push(sliceCtxInline);
   const researchInline = await inlineFileOptional(milestoneResearchPath, milestoneResearchRel, "Milestone Research");
   if (researchInline) inlined.push(researchInline);
   const decisionsInline = await inlineDecisionsFromDb(base, mid);
@@ -1045,6 +1051,8 @@ export async function buildPlanSlicePrompt(
   const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
   const researchPath = resolveSliceFile(base, mid, sid, "RESEARCH");
   const researchRel = relSliceFile(base, mid, sid, "RESEARCH");
+  const sliceContextPath = resolveSliceFile(base, mid, sid, "CONTEXT");
+  const sliceContextRel = relSliceFile(base, mid, sid, "CONTEXT");
 
   const inlined: string[] = [];
 
@@ -1053,6 +1061,8 @@ export async function buildPlanSlicePrompt(
   if (researchSliceAnchor) inlined.push(formatAnchorForPrompt(researchSliceAnchor));
 
   inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
+  const sliceCtxInline = await inlineFileOptional(sliceContextPath, sliceContextRel, "Slice Context (from discussion)");
+  if (sliceCtxInline) inlined.push(sliceCtxInline);
   const researchInline = await inlineFileOptional(researchPath, researchRel, "Slice Research");
   if (researchInline) inlined.push(researchInline);
   if (inlineLevel !== "minimal") {
@@ -1253,9 +1263,13 @@ export async function buildCompleteSlicePrompt(
   const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
   const slicePlanPath = resolveSliceFile(base, mid, sid, "PLAN");
   const slicePlanRel = relSliceFile(base, mid, sid, "PLAN");
+  const sliceContextPath = resolveSliceFile(base, mid, sid, "CONTEXT");
+  const sliceContextRel = relSliceFile(base, mid, sid, "CONTEXT");
 
   const inlined: string[] = [];
   inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
+  const sliceCtxInline = await inlineFileOptional(sliceContextPath, sliceContextRel, "Slice Context (from discussion)");
+  if (sliceCtxInline) inlined.push(sliceCtxInline);
   inlined.push(await inlineFile(slicePlanPath, slicePlanRel, "Slice Plan"));
   if (inlineLevel !== "minimal") {
     const requirementsInline = await inlineRequirementsFromDb(base, sid, inlineLevel);
@@ -1510,9 +1524,13 @@ export async function buildReplanSlicePrompt(
   const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
   const slicePlanPath = resolveSliceFile(base, mid, sid, "PLAN");
   const slicePlanRel = relSliceFile(base, mid, sid, "PLAN");
+  const sliceContextPath = resolveSliceFile(base, mid, sid, "CONTEXT");
+  const sliceContextRel = relSliceFile(base, mid, sid, "CONTEXT");
 
   const inlined: string[] = [];
   inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
+  const sliceCtxInline = await inlineFileOptional(sliceContextPath, sliceContextRel, "Slice Context (from discussion)");
+  if (sliceCtxInline) inlined.push(sliceCtxInline);
   inlined.push(await inlineFile(slicePlanPath, slicePlanRel, "Current Slice Plan"));
 
   // Find the blocker task summary — the completed task with blocker_discovered: true
@@ -1627,9 +1645,13 @@ export async function buildReassessRoadmapPrompt(
   const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
   const summaryPath = resolveSliceFile(base, mid, completedSliceId, "SUMMARY");
   const summaryRel = relSliceFile(base, mid, completedSliceId, "SUMMARY");
+  const sliceContextPath = resolveSliceFile(base, mid, completedSliceId, "CONTEXT");
+  const sliceContextRel = relSliceFile(base, mid, completedSliceId, "CONTEXT");
 
   const inlined: string[] = [];
   inlined.push(await inlineFile(roadmapPath, roadmapRel, "Current Roadmap"));
+  const sliceCtxInline = await inlineFileOptional(sliceContextPath, sliceContextRel, "Slice Context (from discussion)");
+  if (sliceCtxInline) inlined.push(sliceCtxInline);
   inlined.push(await inlineFile(summaryPath, summaryRel, `${completedSliceId} Summary`));
   if (inlineLevel !== "minimal") {
     const projectInline = await inlineProjectFromDb(base);
@@ -1779,6 +1801,36 @@ const GATE_QUESTIONS: Record<string, { question: string; guidance: string }> = {
     ].join("\n"),
   },
 };
+
+export async function buildParallelResearchSlicesPrompt(
+  mid: string,
+  midTitle: string,
+  slices: Array<{ id: string; title: string }>,
+  basePath: string,
+): Promise<string> {
+  // Build individual research-slice prompts for each slice
+  const subagentSections: string[] = [];
+  for (const slice of slices) {
+    const slicePrompt = await buildResearchSlicePrompt(mid, midTitle, slice.id, slice.title, basePath);
+    subagentSections.push([
+      `### ${slice.id}: ${slice.title}`,
+      "",
+      "Use this as the prompt for a `subagent` call (agent: `gsd-executor` or the default agent):",
+      "",
+      "```",
+      slicePrompt,
+      "```",
+    ].join("\n"));
+  }
+
+  return loadPrompt("parallel-research-slices", {
+    mid,
+    midTitle,
+    sliceCount: String(slices.length),
+    sliceList: slices.map((s) => `- **${s.id}**: ${s.title}`).join("\n"),
+    subagentPrompts: subagentSections.join("\n\n---\n\n"),
+  });
+}
 
 export async function buildGateEvaluatePrompt(
   mid: string, midTitle: string, sid: string, sTitle: string,

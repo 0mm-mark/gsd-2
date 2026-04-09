@@ -76,6 +76,7 @@ import {
   hasInteractiveToolInFlight,
   clearInFlightTools,
   isToolInvocationError,
+  isQueuedUserMessageSkip,
 } from "./auto-tool-tracking.js";
 import { closeoutUnit } from "./auto-unit-closeout.js";
 import { recoverTimedOutUnit } from "./auto-timeout-recovery.js";
@@ -188,6 +189,9 @@ import {
 } from "./auto-post-unit.js";
 import { bootstrapAutoSession, openProjectDbIfPresent, type BootstrapDeps } from "./auto-start.js";
 import { autoLoop, resolveAgentEnd, resolveAgentEndCancelled, _resetPendingResolve, isSessionSwitchInFlight, type LoopDeps, type ErrorContext } from "./auto-loop.js";
+// Slice-level parallelism (#2340)
+import { getEligibleSlices } from "./slice-parallel-eligibility.js";
+import { startSliceParallel } from "./slice-parallel-orchestrator.js";
 import {
   WorktreeResolver,
   type WorktreeResolverDeps,
@@ -394,7 +398,7 @@ export function markToolEnd(toolCallId: string): void {
  */
 export function recordToolInvocationError(toolName: string, errorMsg: string): void {
   if (!s.active) return;
-  if (isToolInvocationError(errorMsg)) {
+  if (isToolInvocationError(errorMsg) || isQueuedUserMessageSkip(errorMsg)) {
     s.lastToolInvocationError = `${toolName}: ${errorMsg}`;
   }
 }
@@ -892,6 +896,7 @@ export async function pauseAuto(
       sessionFile: s.pausedSessionFile,
       activeEngineId: s.activeEngineId,
       activeRunDir: s.activeRunDir,
+      autoStartTime: s.autoStartTime,
     };
     const runtimeDir = join(gsdRoot(s.originalBasePath || s.basePath), "runtime");
     mkdirSync(runtimeDir, { recursive: true });
@@ -984,7 +989,7 @@ function buildResolver(): WorktreeResolver {
  * Build the LoopDeps object from auto.ts private scope.
  * This bundles all private functions that autoLoop needs without exporting them.
  */
-function buildLoopDeps(): LoopDeps {
+export function buildLoopDeps(): LoopDeps {
   // Initialize the unified rule registry with converted dispatch rules.
   // Must happen before LoopDeps is assembled so facade functions
   // (resolveDispatch, runPreDispatchHooks, etc.) delegate to the registry.
@@ -1134,10 +1139,11 @@ export async function startAuto(
           s.activeRunDir = meta.activeRunDir ?? null;
           s.originalBasePath = meta.originalBasePath || base;
           s.stepMode = meta.stepMode ?? requestedStepMode;
+          s.autoStartTime = meta.autoStartTime || Date.now();
           s.paused = true;
-          try { unlinkSync(pausedPath); } catch (err) { /* non-fatal */
-            logWarning("session", `pause file cleanup failed: ${err instanceof Error ? err.message : String(err)}`, { file: "auto.ts" });
-          }
+          // Don't delete pause file yet — defer until lock is acquired.
+          // If lock fails, the file must survive for retry.
+          s.pausedSessionFile = pausedPath;
           ctx.ui.notify(
             `Resuming paused custom workflow${meta.activeRunDir ? ` (${meta.activeRunDir})` : ""}.`,
             "info",
@@ -1159,11 +1165,11 @@ export async function startAuto(
             s.currentMilestoneId = meta.milestoneId;
             s.originalBasePath = meta.originalBasePath || base;
             s.stepMode = meta.stepMode ?? requestedStepMode;
+            s.autoStartTime = meta.autoStartTime || Date.now();
             s.paused = true;
-            // Clean up the persisted file — we're consuming it
-            try { unlinkSync(pausedPath); } catch (err) { /* non-fatal */
-            logWarning("session", `pause file cleanup failed: ${err instanceof Error ? err.message : String(err)}`, { file: "auto.ts" });
-          }
+            // Don't delete pause file yet — defer until lock is acquired.
+            // If lock fails, the file must survive for retry.
+            s.pausedSessionFile = pausedPath;
             ctx.ui.notify(
               `Resuming paused session for ${meta.milestoneId}${meta.worktreePath ? ` (worktree)` : ""}.`,
               "info",
@@ -1180,8 +1186,19 @@ export async function startAuto(
   if (s.paused) {
     const resumeLock = acquireSessionLock(base);
     if (!resumeLock.acquired) {
+      // Reset paused state so isAutoPaused() doesn't stick true after lock failure.
+      // Pause file is preserved on disk for retry — not deleted.
+      s.paused = false;
       ctx.ui.notify(`Cannot resume: ${resumeLock.reason}`, "error");
       return;
+    }
+
+    // Lock acquired — now safe to delete the pause file
+    if (s.pausedSessionFile) {
+      try { unlinkSync(s.pausedSessionFile); } catch (err) {
+        logWarning("session", `pause file cleanup failed: ${err instanceof Error ? err.message : String(err)}`, { file: "auto.ts" });
+      }
+      s.pausedSessionFile = null;
     }
 
     s.paused = false;
@@ -1191,6 +1208,7 @@ export async function startAuto(
     s.cmdCtx = ctx;
     s.basePath = base;
     setLogBasePath(base);
+    if (!s.autoStartTime || s.autoStartTime <= 0) s.autoStartTime = Date.now();
     s.unitDispatchCount.clear();
     s.unitLifetimeDispatches.clear();
     if (!getLedger()) initMetrics(base);
@@ -1276,7 +1294,7 @@ export async function startAuto(
     );
     logCmuxEvent(loadEffectiveGSDPreferences()?.preferences, s.stepMode ? "Step-mode resumed." : "Auto-mode resumed.", "progress");
 
-    await autoLoop(ctx, pi, s, buildLoopDeps());
+    await (await import('../../../experimental/orchestrator-factory.js')).createOrchestrator({ctx, pi}).then(o => o.run(s, {ctx, pi}));
     cleanupAfterLoopExit(ctx);
     return;
   }
@@ -1309,7 +1327,7 @@ export async function startAuto(
   logCmuxEvent(loadEffectiveGSDPreferences()?.preferences, requestedStepMode ? "Step-mode started." : "Auto-mode started.", "progress");
 
   // Dispatch the first unit
-  await autoLoop(ctx, pi, s, buildLoopDeps());
+  await (await import('../../../experimental/orchestrator-factory.js')).createOrchestrator({ctx, pi}).then(o => o.run(s, {ctx, pi}));
   cleanupAfterLoopExit(ctx);
 }
 

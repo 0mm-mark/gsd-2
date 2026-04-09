@@ -138,12 +138,19 @@ export class AutoSession {
 
   // ── Dispatch circuit breakers ──────────────────────────────────────
   rewriteAttemptCount = 0;
+  /** Tracks consecutive bootstrap attempts that found phase === "complete".
+   *  Moved from module-level to per-session so s.reset() clears it (#1348). */
+  consecutiveCompleteBootstraps = 0;
 
   // ── Metrics ──────────────────────────────────────────────────────────────
   autoStartTime = 0;
   lastPromptCharCount: number | undefined;
   lastBaselineCharCount: number | undefined;
   pendingQuickTasks: CaptureEntry[] = [];
+
+  // ── Safety harness ───────────────────────────────────────────────────────
+  /** SHA of the pre-unit git checkpoint ref. Cleared on success or rollback. */
+  checkpointSha: string | null = null;
 
   // ── Signal handler ───────────────────────────────────────────────────────
   sigtermHandler: (() => void) | null = null;
@@ -220,9 +227,11 @@ export class AutoSession {
     this.pendingQuickTasks = [];
     this.sidecarQueue = [];
     this.rewriteAttemptCount = 0;
+    this.consecutiveCompleteBootstraps = 0;
     this.lastToolInvocationError = null;
     this.isolationDegraded = false;
     this.milestoneMergedInPhases = false;
+    this.checkpointSha = null;
 
     // Signal handler
     this.sigtermHandler = null;

@@ -19,6 +19,8 @@
 import { appendFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
+import { appendNotification } from "./notification-store.js";
+
 // ─── Types ──────────────────────────────────────────────────────────────
 
 export type LogSeverity = "warn" | "error";
@@ -48,7 +50,8 @@ export type LogComponent =
   | "bootstrap"     // Extension bootstrap (system-context, agent-end)
   | "guided"        // Guided flow (discuss, plan wizards)
   | "registry"      // Rule registry hook state
-  | "renderer";     // Markdown renderer and projections
+  | "renderer"      // Markdown renderer and projections
+  | "safety";       // LLM safety harness
 
 export interface LogEntry {
   ts: string;
@@ -244,6 +247,17 @@ function _push(
   const ctxStr = context ? ` ${JSON.stringify(context)}` : "";
   process.stderr.write(`[gsd:${component}] ${prefix}: ${message}${ctxStr}\n`);
 
+  // Persist to notification store (both warnings and errors)
+  try {
+    appendNotification(
+      `[${component}] ${message}`,
+      severity === "error" ? "error" : "warning",
+      "workflow-logger",
+    );
+  } catch (notifErr) {
+    process.stderr.write(`[gsd:workflow-logger] notification-store append failed: ${(notifErr as Error).message}\n`);
+  }
+
   // Buffer for auto-loop to drain
   _buffer.push(entry);
   if (_buffer.length > MAX_BUFFER) {
@@ -281,7 +295,7 @@ function _sanitizeForAudit(entry: LogEntry): LogEntry {
   };
   if (entry.context) {
     // Allowlist: only persist known-safe structured keys
-    const SAFE_KEYS = new Set(["fn", "tool", "mid", "sid", "tid", "worktree"]);
+    const SAFE_KEYS = new Set(["fn", "tool", "mid", "sid", "tid", "worktree", "id", "error", "count"]);
     const filtered: Record<string, string> = {};
     for (const [k, v] of Object.entries(entry.context)) {
       if (SAFE_KEYS.has(k)) {

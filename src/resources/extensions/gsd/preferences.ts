@@ -201,9 +201,10 @@ function loadPreferencesFile(path: string, scope: "global" | "project"): LoadedG
 
 let _warnedUnrecognizedFormat = false;
 
-/** @internal Reset the warn-once flag — exported for testing only. */
+/** @internal Reset the warn-once flags — exported for testing only. */
 export function _resetParseWarningFlag(): void {
   _warnedUnrecognizedFormat = false;
+  _warnedFrontmatterParse = false;
 }
 
 /** @internal Exported for testing only */
@@ -235,6 +236,7 @@ export function parsePreferencesMarkdown(content: string): GSDPreferences | null
   return null;
 }
 
+let _warnedFrontmatterParse = false;
 function parseFrontmatterBlock(frontmatter: string): GSDPreferences {
   try {
     const parsed = parseYaml(frontmatter);
@@ -243,7 +245,11 @@ function parseFrontmatterBlock(frontmatter: string): GSDPreferences {
     }
     return parsed as GSDPreferences;
   } catch (e) {
-    logWarning("guided", `YAML parse error in frontmatter block: ${(e as Error).message}`);
+    // Warn at most once per session to avoid flooding TUI (#3376)
+    if (!_warnedFrontmatterParse) {
+      _warnedFrontmatterParse = true;
+      logWarning("guided", `YAML parse error in preferences frontmatter (suppressing further): ${(e as Error).message}`);
+    }
     return {} as GSDPreferences;
   }
 }
@@ -367,6 +373,10 @@ function mergePreferences(base: GSDPreferences, override: GSDPreferences): GSDPr
     verification_commands: mergeStringLists(base.verification_commands, override.verification_commands),
     verification_auto_fix: override.verification_auto_fix ?? base.verification_auto_fix,
     verification_max_retries: override.verification_max_retries ?? base.verification_max_retries,
+    enhanced_verification: override.enhanced_verification ?? base.enhanced_verification,
+    enhanced_verification_pre: override.enhanced_verification_pre ?? base.enhanced_verification_pre,
+    enhanced_verification_post: override.enhanced_verification_post ?? base.enhanced_verification_post,
+    enhanced_verification_strict: override.enhanced_verification_strict ?? base.enhanced_verification_strict,
     search_provider: override.search_provider ?? base.search_provider,
     context_selection: override.context_selection ?? base.context_selection,
     auto_visualize: override.auto_visualize ?? base.auto_visualize,
@@ -387,6 +397,9 @@ function mergePreferences(base: GSDPreferences, override: GSDPreferences): GSDPr
             ...((override.codebase?.exclude_patterns) ?? []),
           ].filter(Boolean),
         }
+      : undefined,
+    slice_parallel: (base.slice_parallel || override.slice_parallel)
+      ? { ...(base.slice_parallel ?? {}), ...(override.slice_parallel ?? {}) }
       : undefined,
   };
 }
@@ -552,5 +565,6 @@ export function resolveParallelConfig(prefs: GSDPreferences | undefined): import
     budget_ceiling: prefs?.parallel?.budget_ceiling,
     merge_strategy: prefs?.parallel?.merge_strategy ?? "per-milestone",
     auto_merge: prefs?.parallel?.auto_merge ?? "confirm",
+    worker_model: prefs?.parallel?.worker_model,
   };
 }

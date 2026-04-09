@@ -15,6 +15,7 @@ import type { PostUnitContext, PreVerificationOpts } from "../auto-post-unit.js"
 import {
   MAX_RECOVERY_CHARS,
   BUDGET_THRESHOLDS,
+  MAX_FINALIZE_TIMEOUTS,
   type PhaseResult,
   type IterationContext,
   type LoopState,
@@ -26,14 +27,20 @@ import { runUnit } from "./run-unit.js";
 import { debugLog } from "../debug-logger.js";
 import { PROJECT_FILES } from "../detection.js";
 import { MergeConflictError } from "../git-service.js";
-import { join, basename } from "node:path";
-import { existsSync, cpSync } from "node:fs";
+import { join, basename, dirname, parse as parsePath } from "node:path";
+import { existsSync, cpSync, readdirSync } from "node:fs";
 import { logWarning, logError } from "../workflow-logger.js";
 import { gsdRoot } from "../paths.js";
 import { atomicWriteSync } from "../atomic-write.js";
 import { verifyExpectedArtifact, diagnoseExpectedArtifact, buildLoopRemediationSteps } from "../auto-recovery.js";
 import { writeUnitRuntimeRecord } from "../unit-runtime.js";
-import { withTimeout, FINALIZE_POST_TIMEOUT_MS } from "./finalize-timeout.js";
+import { withTimeout, FINALIZE_PRE_TIMEOUT_MS, FINALIZE_POST_TIMEOUT_MS } from "./finalize-timeout.js";
+import { getEligibleSlices } from "../slice-parallel-eligibility.js";
+import { startSliceParallel } from "../slice-parallel-orchestrator.js";
+import { isDbAvailable, getMilestoneSlices } from "../gsd-db.js";
+import { resetEvidence } from "../safety/evidence-collector.js";
+import { createCheckpoint, cleanupCheckpoint, rollbackToCheckpoint } from "../safety/git-checkpoint.js";
+import { resolveSafetyHarnessConfig } from "../safety/safety-harness.js";
 
 // ─── generateMilestoneReport ──────────────────────────────────────────────────
 
@@ -218,6 +225,63 @@ export async function runPreDispatch(
     mid,
     statePhase: state.phase,
   });
+
+  // ── Slice-level parallelism gate (#2340) ─────────────────────────────
+  // When slice_parallel is enabled, check if multiple slices are eligible
+  // for parallel execution. If so, dispatch them in parallel and stop the
+  // sequential loop. Workers are spawned via slice-parallel-orchestrator.ts.
+  if (
+    prefs?.slice_parallel?.enabled &&
+    mid &&
+    !process.env.GSD_PARALLEL_WORKER &&
+    isDbAvailable()
+  ) {
+    try {
+      const dbSlices = getMilestoneSlices(mid);
+      if (dbSlices.length > 0) {
+        const doneIds = new Set(dbSlices.filter(sl => sl.status === "complete" || sl.status === "done").map(sl => sl.id));
+        const sliceInputs = dbSlices.map(sl => ({
+          id: sl.id,
+          done: doneIds.has(sl.id),
+          depends: sl.depends ?? [],
+        }));
+        const eligible = getEligibleSlices(sliceInputs, doneIds);
+        if (eligible.length > 1) {
+          debugLog("autoLoop", {
+            phase: "slice-parallel-dispatch",
+            iteration: ic.iteration,
+            mid,
+            eligibleSlices: eligible.map(e => e.id),
+          });
+          ctx.ui.notify(
+            `Slice-parallel: dispatching ${eligible.length} eligible slices for ${mid}.`,
+            "info",
+          );
+          const result = await startSliceParallel(
+            s.basePath,
+            mid,
+            eligible,
+            { maxWorkers: prefs.slice_parallel.max_workers ?? 2 },
+          );
+          if (result.started.length > 0) {
+            ctx.ui.notify(
+              `Slice-parallel: started ${result.started.length} worker(s): ${result.started.join(", ")}.`,
+              "info",
+            );
+            await deps.stopAuto(ctx, pi, `Slice-parallel dispatched for ${mid}`);
+            return { action: "break", reason: "slice-parallel-dispatched" };
+          }
+          // Fall through to sequential if no workers started
+        }
+      }
+    } catch (err) {
+      debugLog("autoLoop", {
+        phase: "slice-parallel-check-error",
+        error: err instanceof Error ? err.message : String(err),
+      });
+      // Non-fatal — fall through to sequential dispatch
+    }
+  }
 
   // ── Milestone transition ────────────────────────────────────────────
   if (mid && s.currentMilestoneId && mid !== s.currentMilestoneId) {
@@ -949,11 +1013,38 @@ export async function runUnitPhase(
     }
     const hasProjectFile = PROJECT_FILES.some((f) => deps.existsSync(join(s.basePath, f)));
     const hasSrcDir = deps.existsSync(join(s.basePath, "src"));
-    if (!hasProjectFile && !hasSrcDir) {
+    // Xcode bundles have project-specific names (*.xcodeproj, *.xcworkspace)
+    // that cannot be matched by exact filename — scan the directory by suffix.
+    let hasXcodeBundle = false;
+    try {
+      const entries = deps.existsSync(s.basePath) ? readdirSync(s.basePath) : [];
+      hasXcodeBundle = entries.some((e: string) => e.endsWith(".xcodeproj") || e.endsWith(".xcworkspace"));
+    } catch (err) {
+      debugLog("runUnitPhase", { phase: "xcode-bundle-scan-failed", basePath: s.basePath, error: String(err) });
+    }
+    // Monorepo support (#2347): if no project files in the worktree directory,
+    // walk parent directories up to the filesystem root. In monorepos,
+    // package.json / Cargo.toml etc. live in a parent directory.
+    let hasProjectFileInParent = false;
+    if (!hasProjectFile && !hasSrcDir && !hasXcodeBundle) {
+      let checkDir = dirname(s.basePath);
+      const { root } = parsePath(checkDir);
+      while (checkDir !== root) {
+        // Stop at git repository boundary — ancestors above the repo root
+        // (e.g. ~ or /usr/local) may contain unrelated project files.
+        if (deps.existsSync(join(checkDir, ".git"))) break;
+        if (PROJECT_FILES.some((f) => deps.existsSync(join(checkDir, f)))) {
+          hasProjectFileInParent = true;
+          break;
+        }
+        checkDir = dirname(checkDir);
+      }
+    }
+    if (!hasProjectFile && !hasSrcDir && !hasXcodeBundle && !hasProjectFileInParent) {
       // Greenfield projects won't have project files yet — the first task creates them.
       // Log a warning but allow execution to proceed. The .git check above is sufficient
       // to ensure we're in a valid working directory.
-      debugLog("runUnitPhase", { phase: "worktree-health-warn-greenfield", basePath: s.basePath, hasProjectFile, hasSrcDir });
+      debugLog("runUnitPhase", { phase: "worktree-health-warn-greenfield", basePath: s.basePath, hasProjectFile, hasSrcDir, hasXcodeBundle });
       ctx.ui.notify(`Warning: ${s.basePath} has no recognized project files — proceeding as greenfield project`, "warning");
     }
   }
@@ -991,6 +1082,21 @@ export async function runUnitPhase(
   ctx.ui.setStatus("gsd-auto", "auto");
   if (mid)
     deps.updateSliceProgressCache(s.basePath, mid, state.activeSlice?.id);
+
+  // ── Safety harness: reset evidence + create checkpoint ──
+  const safetyConfig = resolveSafetyHarnessConfig(
+    prefs?.safety_harness as Record<string, unknown> | undefined,
+  );
+  if (safetyConfig.enabled && safetyConfig.evidence_collection) {
+    resetEvidence();
+  }
+  // Only checkpoint code-executing units (not lifecycle/planning units)
+  if (safetyConfig.enabled && safetyConfig.checkpoints && unitType === "execute-task") {
+    s.checkpointSha = createCheckpoint(s.basePath, unitId);
+    if (s.checkpointSha) {
+      debugLog("runUnitPhase", { phase: "checkpoint-created", unitId, sha: s.checkpointSha.slice(0, 8) });
+    }
+  }
 
   // Prompt injection
   let finalPrompt = prompt;
@@ -1289,6 +1395,27 @@ export async function runUnitPhase(
 
   deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "unit-end", data: { unitType, unitId, status: unitResult.status, artifactVerified, ...(unitResult.errorContext ? { errorContext: unitResult.errorContext } : {}) }, causedBy: { flowId: ic.flowId, seq: unitStartSeq } });
 
+  // ── Safety harness: checkpoint cleanup or rollback ──
+  if (s.checkpointSha) {
+    if (unitResult.status === "error" && safetyConfig.auto_rollback) {
+      const rolled = rollbackToCheckpoint(s.basePath, unitId, s.checkpointSha);
+      if (rolled) {
+        ctx.ui.notify(`Rolled back to pre-unit checkpoint for ${unitId}`, "info");
+        debugLog("runUnitPhase", { phase: "checkpoint-rollback", unitId });
+      }
+    } else if (unitResult.status === "error") {
+      ctx.ui.notify(
+        `Unit ${unitId} failed. Pre-unit checkpoint available at ${s.checkpointSha.slice(0, 8)}`,
+        "warning",
+      );
+    } else {
+      // Success — clean up checkpoint ref
+      cleanupCheckpoint(s.basePath, unitId);
+      debugLog("runUnitPhase", { phase: "checkpoint-cleaned", unitId });
+    }
+    s.checkpointSha = null;
+  }
+
   return { action: "next", data: { unitStartedAt: s.currentUnit?.startedAt } };
 }
 
@@ -1301,6 +1428,7 @@ export async function runUnitPhase(
 export async function runFinalize(
   ic: IterationContext,
   iterData: IterationData,
+  loopState: LoopState,
   sidecarItem?: SidecarItem,
 ): Promise<PhaseResult> {
   const { ctx, pi, s, deps } = ic;
@@ -1324,13 +1452,58 @@ export async function runFinalize(
   };
 
   // Pre-verification processing (commit, doctor, state rebuild, etc.)
+  // Timeout guard: if postUnitPreVerification hangs (e.g., safety harness
+  // deadlock, browser teardown hang, worktree sync stall), force-continue
+  // after timeout so the auto-loop is not permanently frozen (#3757).
+  //
+  // On timeout, null out s.currentUnit so the timed-out task's late async
+  // mutations are harmless — postUnitPreVerification guards all side effects
+  // behind `if (s.currentUnit)`. The next iteration sets a fresh currentUnit.
   // Sidecar items use lightweight pre-verification opts
   const preVerificationOpts: PreVerificationOpts | undefined = sidecarItem
     ? sidecarItem.kind === "hook"
       ? { skipSettleDelay: true, skipWorktreeSync: true }
       : { skipSettleDelay: true }
     : undefined;
-  const preResult = await deps.postUnitPreVerification(postUnitCtx, preVerificationOpts);
+  const preUnitSnapshot = s.currentUnit
+    ? { type: s.currentUnit.type, id: s.currentUnit.id, startedAt: s.currentUnit.startedAt }
+    : null;
+  const preResultGuard = await withTimeout(
+    deps.postUnitPreVerification(postUnitCtx, preVerificationOpts),
+    FINALIZE_PRE_TIMEOUT_MS,
+    "postUnitPreVerification",
+  );
+
+  if (preResultGuard.timedOut) {
+    // Detach session from the timed-out unit so late async completions
+    // cannot mutate state for the next unit (#3757).
+    s.currentUnit = null;
+    loopState.consecutiveFinalizeTimeouts++;
+    debugLog("autoLoop", {
+      phase: "pre-verification-timeout",
+      iteration: ic.iteration,
+      unitType: iterData.unitType,
+      unitId: iterData.unitId,
+      consecutiveTimeouts: loopState.consecutiveFinalizeTimeouts,
+    });
+
+    if (loopState.consecutiveFinalizeTimeouts >= MAX_FINALIZE_TIMEOUTS) {
+      ctx.ui.notify(
+        `postUnitPreVerification timed out ${loopState.consecutiveFinalizeTimeouts} consecutive times — stopping auto-mode to prevent budget waste`,
+        "error",
+      );
+      await deps.stopAuto(ctx, pi, `${loopState.consecutiveFinalizeTimeouts} consecutive finalize timeouts`);
+      return { action: "break", reason: "finalize-timeout-escalation" };
+    }
+
+    ctx.ui.notify(
+      `postUnitPreVerification timed out after ${FINALIZE_PRE_TIMEOUT_MS / 1000}s for ${iterData.unitType} ${iterData.unitId} (${loopState.consecutiveFinalizeTimeouts}/${MAX_FINALIZE_TIMEOUTS}) — continuing to next iteration`,
+      "warning",
+    );
+    return { action: "next", data: undefined as void };
+  }
+
+  const preResult = preResultGuard.value;
   if (preResult === "dispatched") {
     debugLog("autoLoop", {
       phase: "exit",
@@ -1399,14 +1572,29 @@ export async function runFinalize(
   );
 
   if (postResultGuard.timedOut) {
+    // Detach session from the timed-out unit so late async completions
+    // cannot mutate state for the next unit (#3757).
+    s.currentUnit = null;
+    loopState.consecutiveFinalizeTimeouts++;
     debugLog("autoLoop", {
       phase: "post-verification-timeout",
       iteration: ic.iteration,
       unitType: iterData.unitType,
       unitId: iterData.unitId,
+      consecutiveTimeouts: loopState.consecutiveFinalizeTimeouts,
     });
+
+    if (loopState.consecutiveFinalizeTimeouts >= MAX_FINALIZE_TIMEOUTS) {
+      ctx.ui.notify(
+        `postUnitPostVerification timed out ${loopState.consecutiveFinalizeTimeouts} consecutive times — stopping auto-mode to prevent budget waste`,
+        "error",
+      );
+      await deps.stopAuto(ctx, pi, `${loopState.consecutiveFinalizeTimeouts} consecutive finalize timeouts`);
+      return { action: "break", reason: "finalize-timeout-escalation" };
+    }
+
     ctx.ui.notify(
-      `postUnitPostVerification timed out after ${FINALIZE_POST_TIMEOUT_MS / 1000}s for ${iterData.unitType} ${iterData.unitId} — continuing to next iteration`,
+      `postUnitPostVerification timed out after ${FINALIZE_POST_TIMEOUT_MS / 1000}s for ${iterData.unitType} ${iterData.unitId} (${loopState.consecutiveFinalizeTimeouts}/${MAX_FINALIZE_TIMEOUTS}) — continuing to next iteration`,
       "warning",
     );
     return { action: "next", data: undefined as void };
@@ -1427,6 +1615,9 @@ export async function runFinalize(
     debugLog("autoLoop", { phase: "exit", reason: "step-wizard" });
     return { action: "break", reason: "step-wizard" };
   }
+
+  // Both pre and post verification completed without timeout — reset counter
+  loopState.consecutiveFinalizeTimeouts = 0;
 
   return { action: "next", data: undefined as void };
 }

@@ -97,6 +97,7 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "reactive_execution",
   "gate_evaluation",
   "github",
+  "orchestrator",
   "service_tier",
   "forensics_dedup",
   "show_token_cost",
@@ -104,6 +105,15 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "context_management",
   "experimental",
   "codebase",
+  "slice_parallel",
+  "safety_harness",
+  "enhanced_verification",
+  "enhanced_verification_pre",
+  "enhanced_verification_post",
+  "enhanced_verification_strict",
+  "discuss_preparation",
+  "discuss_web_research",
+  "discuss_depth",
 ]);
 
 /** Canonical list of all dispatch unit types. */
@@ -268,6 +278,8 @@ export interface GSDPreferences {
   gate_evaluation?: GateEvaluationConfig;
   /** GitHub sync configuration. Opt-in: syncs GSD events to GitHub Issues, Milestones, and PRs. */
   github?: GitHubSyncConfig;
+  /** Orchestrator to use for auto-mode execution ("legacy" is default). Configured via GSD_ORCHESTRATOR env or prefs.orchestrator. */
+  orchestrator?: string;
   /** OpenAI service tier preference. "priority" = 2x cost, faster. "flex" = 0.5x cost, slower. Only affects gpt-5.4 models. */
   service_tier?: "priority" | "flex";
   /** Opt-in: search existing issues and PRs before filing from /gsd forensics. Uses additional AI tokens. */
@@ -288,6 +300,66 @@ export interface GSDPreferences {
   experimental?: ExperimentalPreferences;
   /** Configuration for the codebase map generator (/gsd codebase). */
   codebase?: CodebaseMapPreferences;
+  /** Slice-level parallelism within a milestone. Disabled by default. */
+  slice_parallel?: { enabled?: boolean; max_workers?: number };
+  /** LLM safety harness configuration. Monitors, validates, and constrains LLM behavior during auto-mode. Enabled by default with warn-and-continue policy. */
+  safety_harness?: {
+    enabled?: boolean;
+    evidence_collection?: boolean;
+    file_change_validation?: boolean;
+    evidence_cross_reference?: boolean;
+    destructive_command_warnings?: boolean;
+    content_validation?: boolean;
+    checkpoints?: boolean;
+    auto_rollback?: boolean;
+    timeout_scale_cap?: number;
+  };
+
+
+  // ─── Enhanced Verification ──────────────────────────────────────────────────
+  /**
+   * Enable enhanced verification (both pre-execution and post-execution checks).
+   * Default: true (opt-out, not opt-in). Set false to disable all enhanced verification.
+   */
+  enhanced_verification?: boolean;
+  /**
+   * Enable pre-execution checks (package existence, file references, etc.).
+   * Only applies when enhanced_verification is true.
+   * Default: true.
+   */
+  enhanced_verification_pre?: boolean;
+  /**
+   * Enable post-execution checks (runtime error detection, audit warnings, etc.).
+   * Only applies when enhanced_verification is true.
+   * Default: true.
+   */
+  enhanced_verification_post?: boolean;
+  /**
+   * Strict mode: treat any pre-execution check failure as blocking.
+   * Default: false (warnings only for non-critical failures).
+   */
+  enhanced_verification_strict?: boolean;
+  /**
+   * Enable the preparation phase before discussion sessions.
+   * Preparation analyzes the codebase, reviews prior context, and optionally researches the ecosystem.
+   * Default: true.
+   */
+  discuss_preparation?: boolean;
+  /**
+   * Enable web research during preparation phase.
+   * When enabled, searches for best practices and known issues for the detected tech stack.
+   * Requires a search API key (TAVILY_API_KEY or BRAVE_API_KEY).
+   * Default: true.
+   */
+  discuss_web_research?: boolean;
+  /**
+   * Depth of preparation analysis.
+   * - "quick": Minimal analysis, fastest (~10s)
+   * - "standard": Balanced analysis (~30s)
+   * - "thorough": Deep analysis with more file sampling (~60s)
+   * Default: "standard".
+   */
+  discuss_depth?: "quick" | "standard" | "thorough";
 }
 
 export interface LoadedGSDPreferences {
