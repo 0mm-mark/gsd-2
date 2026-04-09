@@ -10,6 +10,8 @@ on:
 
   push:
     branches: [sync]
+    tags: ['**']  # React immediately when new tags appear upstream
+
   schedule:
     - cron: '0 * * * *'
   workflow_dispatch:
@@ -22,7 +24,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  apply-patches:
+  apply-patches:  # ← Your original job — completely unchanged
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
@@ -42,7 +44,7 @@ jobs:
 
           # Copy patches to /tmp while we are still on sync (guaranteed to exist)
           rm -rf /tmp/patches
-          cp -r patches /tmp/patches
+          cp -rf patches /tmp/patches
 
           echo "=== Patches copied to /tmp ==="
           ls -la /tmp/patches
@@ -59,7 +61,7 @@ jobs:
 
           # Remove any stale patches/ and copy from temp
           rm -rf patches/
-          cp -r /tmp/patches ./patches
+          cp -rf /tmp/patches ./patches
 
           echo "=== After copying patches to main ==="
           ls -la patches/
@@ -72,9 +74,80 @@ jobs:
           }
 
           # Force .mcp.json override
-          cp patches/mcp.json .mcp.json
+          cp -f patches/mcp.json .mcp.json
           git add .mcp.json
           git commit -m "chore: force .mcp.json override from patch (always wins)" || true
 
           # Safe push (prevents overwriting someone else's push)
           git push --force-with-lease origin main
+
+  apply-patches-to-latest-tag:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sync branch (contains patches/)
+        uses: actions/checkout@v4
+        with:
+          ref: sync
+          token: ${{ secrets.SYNC_TOKEN }}
+          fetch-depth: 0
+
+      - name: Apply patches to most recent tag (idempotent)
+        run: |
+          set -x   # show every command for debugging
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Copy patches to /tmp while we are still on sync
+          rm -rf /tmp/patches
+          cp -rf patches /tmp/patches
+
+          echo "=== Patches copied to /tmp ==="
+          ls -la /tmp/patches
+
+          # Fetch all tags (and prune deleted ones)
+          git fetch origin --tags --force --prune
+
+          # Determine the most recent tag (version-sort descending)
+          LATEST_TAG=$(git tag --sort=-v:refname | head -n 1)
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No tags found in the repository. Skipping tag-based patching."
+            exit 0
+          fi
+          echo "=== Most recent tag: $LATEST_TAG ==="
+
+          # Target branch that always tracks "latest upstream tag + patches"
+          TARGET_BRANCH="pluggable-latest"
+
+          # Guarantee completely clean base at the chosen tag
+          git checkout -B "$TARGET_BRANCH" "$LATEST_TAG"
+
+          echo "=== Before cleanup on $TARGET_BRANCH ==="
+          ls -la patches/ 2>/dev/null || echo "No patches/ dir"
+
+          # Remove any stale patches/ and copy fresh ones from temp
+          rm -rf patches/
+          cp -rf /tmp/patches ./patches
+
+          echo "=== After copying patches ==="
+          ls -la patches/
+
+          # Apply the feature patch (identical logic to main job)
+          git am --3way --ignore-whitespace patches/pluggable-orchestrator.patch || {
+            echo "::error::Feature patch failed to apply on tag $LATEST_TAG."
+            git am --abort
+            exit 1
+          }
+
+          # Force .mcp.json override (safe if file is missing on older tags)
+          if [ -f patches/mcp.json ]; then
+            cp -f patches/mcp.json .mcp.json
+            git add .mcp.json
+            git commit -m "chore: force .mcp.json override from patch (always wins)" || true
+          fi
+
+          # Safe push (idempotent — same result produces no change)
+          git push --force-with-lease origin "$TARGET_BRANCH"
+
+          echo "=== Successfully applied patches to $LATEST_TAG and updated $TARGET_BRANCH ==="
