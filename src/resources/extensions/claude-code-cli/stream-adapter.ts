@@ -398,6 +398,7 @@ export function buildSdkOptions(
 	extraOptions: Record<string, unknown> = {},
 ): Record<string, unknown> {
 	const mcpServers = buildWorkflowMcpServers();
+	const disallowedTools = ["AskUserQuestion"];
 	return {
 		pathToClaudeCodeExecutable: getClaudePath(),
 		model: modelId,
@@ -408,6 +409,7 @@ export function buildSdkOptions(
 		allowDangerouslySkipPermissions: true,
 		settingSources: ["project"],
 		systemPrompt: { type: "preset", preset: "claude_code" },
+		disallowedTools,
 		...(mcpServers ? { mcpServers } : {}),
 		betas: modelId.includes("sonnet") ? ["context-1m-2025-08-07"] : [],
 		...extraOptions,
