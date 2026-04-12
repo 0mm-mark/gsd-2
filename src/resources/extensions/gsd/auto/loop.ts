@@ -27,7 +27,7 @@ import {
   runFinalize,
 } from "./phases.js";
 import { debugLog } from "../debug-logger.js";
-import { isInfrastructureError } from "./infra-errors.js";
+import { isInfrastructureError, isTransientCooldownError, getCooldownRetryAfterMs, COOLDOWN_FALLBACK_WAIT_MS, MAX_COOLDOWN_RETRIES } from "./infra-errors.js";
 import { resolveEngine } from "../engine-resolver.js";
 
 /**
@@ -48,6 +48,7 @@ export async function autoLoop(
   let iteration = 0;
   const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 };
   let consecutiveErrors = 0;
+  let consecutiveCooldowns = 0;
   const recentErrorMessages: string[] = [];
 
   while (s.active) {
@@ -203,6 +204,7 @@ export async function autoLoop(
 
         deps.clearUnitTimeout();
         consecutiveErrors = 0;
+        consecutiveCooldowns = 0;
         recentErrorMessages.length = 0;
         deps.emitJournalEvent({ ts: new Date().toISOString(), flowId, seq: nextSeq(), eventType: "iteration-end", data: { iteration } });
         debugLog("autoLoop", { phase: "iteration-complete", iteration });
@@ -265,6 +267,7 @@ export async function autoLoop(
       if (finalizeResult.action === "continue") continue;
 
       consecutiveErrors = 0; // Iteration completed successfully
+      consecutiveCooldowns = 0;
       recentErrorMessages.length = 0;
       deps.emitJournalEvent({ ts: new Date().toISOString(), flowId, seq: nextSeq(), eventType: "iteration-end", data: { iteration } });
       debugLog("autoLoop", { phase: "iteration-complete", iteration });
@@ -298,6 +301,47 @@ export async function autoLoop(
           `Infrastructure error (${infraCode}): not recoverable by retry`,
         );
         break;
+      }
+
+      // ── Credential cooldown: wait and retry with bounded budget ──
+      // A 429 triggers a 30s credential backoff in AuthStorage. If the SDK's
+      // getApiKey() retries couldn't outlast the window, the error surfaces
+      // here. Wait for the cooldown to clear rather than counting it as a
+      // consecutive failure — but cap retries so we don't spin for hours
+      // on persistent quota exhaustion.
+      if (isTransientCooldownError(loopErr)) {
+        consecutiveCooldowns++;
+        const retryAfterMs = getCooldownRetryAfterMs(loopErr);
+        debugLog("autoLoop", {
+          phase: "cooldown-wait",
+          iteration,
+          consecutiveCooldowns,
+          retryAfterMs,
+          error: msg,
+        });
+
+        if (consecutiveCooldowns > MAX_COOLDOWN_RETRIES) {
+          ctx.ui.notify(
+            `Auto-mode stopped: ${consecutiveCooldowns} consecutive credential cooldowns — rate limit or quota may be persistently exhausted.`,
+            "error",
+          );
+          await deps.stopAuto(
+            ctx,
+            pi,
+            `${consecutiveCooldowns} consecutive credential cooldowns exceeded retry budget`,
+          );
+          break;
+        }
+
+        const waitMs = (retryAfterMs !== undefined && retryAfterMs > 0 && retryAfterMs <= 60_000)
+          ? retryAfterMs + 500 // Use structured hint + small buffer
+          : COOLDOWN_FALLBACK_WAIT_MS;
+        ctx.ui.notify(
+          `Credentials in cooldown (${consecutiveCooldowns}/${MAX_COOLDOWN_RETRIES}) — waiting ${Math.round(waitMs / 1000)}s before retrying.`,
+          "warning",
+        );
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+        continue; // Retry iteration without incrementing consecutiveErrors
       }
 
       consecutiveErrors++;
