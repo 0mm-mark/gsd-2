@@ -15,7 +15,7 @@ import { loadPrompt, inlineTemplate } from "./prompt-loader.js";
 import { buildSkillActivationBlock } from "./auto-prompts.js";
 import { deriveState } from "./state.js";
 import { invalidateAllCaches } from "./cache.js";
-import { startAuto } from "./auto.js";
+import { startAutoDetached } from "./auto.js";
 import { clearLock } from "./crash-recovery.js";
 import {
   assessInterruptedSession,
@@ -67,7 +67,6 @@ export {
   showQueue, handleQueueReorder, showQueueAdd,
   buildExistingMilestonesContext,
 } from "./guided-flow-queue.js";
-import { getErrorMessage } from "./error-utils.js";
 import { logWarning } from "./workflow-logger.js";
 
 // ─── ID Generation with Reservation ─────────────────────────────────────────
@@ -244,11 +243,7 @@ export function checkAutoStartAfterDiscuss(): boolean {
 
   pendingAutoStartMap.delete(basePath);
   ctx.ui.notify(`Milestone ${milestoneId} ready.`, "info");
-  startAuto(ctx, pi, basePath, false, { step }).catch((err) => {
-    ctx.ui.notify(`Auto-start failed: ${getErrorMessage(err)}`, "error");
-    logWarning("guided", `auto start error: ${getErrorMessage(err)}`);
-    debugLog("auto-start-failed", { error: getErrorMessage(err) });
-  });
+  startAutoDetached(ctx, pi, basePath, false, { step });
   return true;
 }
 
@@ -426,8 +421,9 @@ function resolveAvailableModel<T extends { id: string; provider: string }>(
  * Build the discuss-and-plan prompt for a new milestone.
  * Used by all three "new milestone" paths (first ever, no active, all complete).
  */
-function buildDiscussPrompt(nextId: string, preamble: string, _basePath: string, preparationContext?: string): string {
+function buildDiscussPrompt(nextId: string, preamble: string, _basePath: string, pi: ExtensionAPI, ctx: ExtensionCommandContext, preparationContext?: string): string {
   const milestoneRel = `.gsd/milestones/${nextId}`;
+  const structuredQuestionsAvailable = getStructuredQuestionsAvailability(pi, ctx);
   const inlinedTemplates = [
     inlineTemplate("project", "Project"),
     inlineTemplate("requirements", "Requirements"),
@@ -439,6 +435,7 @@ function buildDiscussPrompt(nextId: string, preamble: string, _basePath: string,
     milestoneId: nextId,
     preamble,
     preparationContext: preparationContext ?? "",
+    structuredQuestionsAvailable,
     contextPath: `${milestoneRel}/${nextId}-CONTEXT.md`,
     roadmapPath: `${milestoneRel}/${nextId}-ROADMAP.md`,
     inlinedTemplates,
@@ -486,6 +483,7 @@ function buildHeadlessDiscussPrompt(nextId: string, seedContext: string, _basePa
  */
 async function prepareAndBuildDiscussPrompt(
   ctx: ExtensionCommandContext,
+  pi: ExtensionAPI,
   nextId: string,
   preamble: string,
   basePath: string,
@@ -520,7 +518,7 @@ async function prepareAndBuildDiscussPrompt(
     }
   }
 
-  return buildDiscussPrompt(nextId, preamble, basePath, preparationContext);
+  return buildDiscussPrompt(nextId, preamble, basePath, pi, ctx, preparationContext);
 }
 
 /**
@@ -780,7 +778,7 @@ export async function showDiscuss(
       const uniqueMilestoneIds = !!loadEffectiveGSDPreferences()?.preferences?.unique_milestone_ids;
       const nextId = nextMilestoneIdReserved(milestoneIds, uniqueMilestoneIds);
       pendingAutoStartMap.set(basePath, { ctx, pi, basePath, milestoneId: nextId, step: false, createdAt: Date.now() });
-      await dispatchWorkflow(pi, await prepareAndBuildDiscussPrompt(ctx, nextId, `New milestone ${nextId}.`, basePath), "gsd-run", ctx, "discuss-milestone");
+      await dispatchWorkflow(pi, await prepareAndBuildDiscussPrompt(ctx, pi, nextId, `New milestone ${nextId}.`, basePath), "gsd-run", ctx, "discuss-milestone");
     }
     return;
   }
@@ -1185,7 +1183,7 @@ async function handleMilestoneActions(
     const uniqueMilestoneIds = !!loadEffectiveGSDPreferences()?.preferences?.unique_milestone_ids;
     const nextId = nextMilestoneIdReserved(milestoneIds, uniqueMilestoneIds);
     pendingAutoStartMap.set(basePath, { ctx, pi, basePath, milestoneId: nextId, step: stepMode, createdAt: Date.now() });
-    await dispatchWorkflow(pi, await prepareAndBuildDiscussPrompt(ctx, nextId,
+    await dispatchWorkflow(pi, await prepareAndBuildDiscussPrompt(ctx, pi, nextId,
       `New milestone ${nextId}.`,
       basePath
     ), "gsd-run", ctx, "discuss-milestone");
@@ -1302,7 +1300,7 @@ export async function showSmartEntry(
       ],
     });
     if (resume === "resume") {
-      await startAuto(ctx, pi, basePath, false, {
+      startAutoDetached(ctx, pi, basePath, false, {
         interrupted,
         step: interrupted.pausedSession?.stepMode ?? false,
       });
@@ -1375,7 +1373,7 @@ export async function showSmartEntry(
     if (isFirst) {
       // First ever — skip wizard, just ask directly
       pendingAutoStartMap.set(basePath, { ctx, pi, basePath, milestoneId: nextId, step: stepMode, createdAt: Date.now() });
-      await dispatchWorkflow(pi, await prepareAndBuildDiscussPrompt(ctx, nextId,
+      await dispatchWorkflow(pi, await prepareAndBuildDiscussPrompt(ctx, pi, nextId,
         `New project, milestone ${nextId}. Do NOT read or explore .gsd/ — it's empty scaffolding.`,
         basePath
       ), "gsd-run", ctx, "discuss-milestone");
@@ -1396,7 +1394,7 @@ export async function showSmartEntry(
 
       if (choice === "new_milestone") {
         pendingAutoStartMap.set(basePath, { ctx, pi, basePath, milestoneId: nextId, step: stepMode, createdAt: Date.now() });
-        await dispatchWorkflow(pi, await prepareAndBuildDiscussPrompt(ctx, nextId,
+        await dispatchWorkflow(pi, await prepareAndBuildDiscussPrompt(ctx, pi, nextId,
           `New milestone ${nextId}.`,
           basePath
         ), "gsd-run", ctx, "discuss-milestone");
@@ -1435,7 +1433,7 @@ export async function showSmartEntry(
       const nextId = nextMilestoneIdReserved(milestoneIds, uniqueMilestoneIds);
 
       pendingAutoStartMap.set(basePath, { ctx, pi, basePath, milestoneId: nextId, step: stepMode, createdAt: Date.now() });
-      await dispatchWorkflow(pi, await prepareAndBuildDiscussPrompt(ctx, nextId,
+      await dispatchWorkflow(pi, await prepareAndBuildDiscussPrompt(ctx, pi, nextId,
         `New milestone ${nextId}.`,
         basePath
       ), "gsd-run", ctx, "discuss-milestone");
@@ -1502,7 +1500,7 @@ export async function showSmartEntry(
       const uniqueMilestoneIds = !!loadEffectiveGSDPreferences()?.preferences?.unique_milestone_ids;
       const nextId = nextMilestoneIdReserved(milestoneIds, uniqueMilestoneIds);
       pendingAutoStartMap.set(basePath, { ctx, pi, basePath, milestoneId: nextId, step: stepMode, createdAt: Date.now() });
-      await dispatchWorkflow(pi, await prepareAndBuildDiscussPrompt(ctx, nextId,
+      await dispatchWorkflow(pi, await prepareAndBuildDiscussPrompt(ctx, pi, nextId,
         `New milestone ${nextId}.`,
         basePath
       ), "gsd-run", ctx, "discuss-milestone");
@@ -1599,7 +1597,7 @@ export async function showSmartEntry(
         const uniqueMilestoneIds = !!loadEffectiveGSDPreferences()?.preferences?.unique_milestone_ids;
         const nextId = nextMilestoneIdReserved(milestoneIds, uniqueMilestoneIds);
         pendingAutoStartMap.set(basePath, { ctx, pi, basePath, milestoneId: nextId, step: stepMode, createdAt: Date.now() });
-        await dispatchWorkflow(pi, await prepareAndBuildDiscussPrompt(ctx, nextId,
+        await dispatchWorkflow(pi, await prepareAndBuildDiscussPrompt(ctx, pi, nextId,
           `New milestone ${nextId}.`,
           basePath
         ), "gsd-run", ctx, "discuss-milestone");
@@ -1644,7 +1642,7 @@ export async function showSmartEntry(
       });
 
       if (choice === "auto") {
-        await startAuto(ctx, pi, basePath, false);
+        startAutoDetached(ctx, pi, basePath, false);
       } else if (choice === "status") {
         const { fireStatusViaCommand } = await import("./commands.js");
         await fireStatusViaCommand(ctx);
@@ -1856,7 +1854,7 @@ export async function showSmartEntry(
     });
 
     if (choice === "auto") {
-      await startAuto(ctx, pi, basePath, false);
+      startAutoDetached(ctx, pi, basePath, false);
       return;
     }
 

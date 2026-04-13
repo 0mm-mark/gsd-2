@@ -60,6 +60,8 @@ interface SdkElicitationFieldSchema {
 	type?: string;
 	title?: string;
 	description?: string;
+	format?: string;
+	writeOnly?: boolean;
 	oneOf?: SdkElicitationRequestOption[];
 	items?: {
 		anyOf?: SdkElicitationRequestOption[];
@@ -73,6 +75,7 @@ interface SdkElicitationRequest {
 	requestedSchema?: {
 		type?: string;
 		properties?: Record<string, SdkElicitationFieldSchema>;
+		required?: string[];
 	};
 }
 
@@ -85,7 +88,16 @@ interface ParsedElicitationQuestion extends Question {
 	noteFieldId?: string;
 }
 
+interface ParsedTextInputField {
+	id: string;
+	title: string;
+	description: string;
+	required: boolean;
+	secure: boolean;
+}
+
 const OTHER_OPTION_LABEL = "None of the above";
+const SENSITIVE_FIELD_PATTERN = /(password|passphrase|secret|token|api[_\s-]*key|private[_\s-]*key|credential)/i;
 
 // ---------------------------------------------------------------------------
 // Stream factory
@@ -104,6 +116,18 @@ function createAssistantStream(): AssistantMessageEventStream {
 			throw new Error("Unexpected event type for final result");
 		},
 	) as AssistantMessageEventStream;
+}
+
+export function getResultErrorMessage(result: SDKResultMessage): string {
+	if ("errors" in result && Array.isArray(result.errors) && result.errors.length > 0) {
+		return result.errors.join("; ");
+	}
+
+	if ("result" in result && typeof result.result === "string" && result.result.trim().length > 0) {
+		return result.result.trim();
+	}
+
+	return result.subtype === "success" ? "claude_code_request_failed" : result.subtype;
 }
 
 // ---------------------------------------------------------------------------
@@ -163,20 +187,36 @@ function extractMessageText(msg: { role: string; content: unknown }): string {
  * call effectively stateless. This version serialises the complete
  * conversation history (system prompt + all user/assistant turns) so
  * Claude Code has full context for multi-turn continuity.
+ *
+ * History is wrapped in XML-tag structure rather than `[User]`/`[Assistant]`
+ * bracket headers. Bracket headers read to the model as an in-context
+ * demonstration of how turns are delimited, causing it to fabricate fake
+ * user turns in its own output. XML tags read as document structure and
+ * don't get mirrored in free text.
  */
 export function buildPromptFromContext(context: Context): string {
-	const parts: string[] = [];
+	const hasContent = Boolean(context.systemPrompt) || context.messages.some((m) => extractMessageText(m));
+	if (!hasContent) return "";
+
+	const parts: string[] = [
+		"Respond only to the final user message below. " +
+			"Do not emit <user_message>, <assistant_message>, or <prior_system_context> tags in your response.",
+	];
 
 	if (context.systemPrompt) {
-		parts.push(`[System]\n${context.systemPrompt}`);
+		parts.push(`<prior_system_context>\n${context.systemPrompt}\n</prior_system_context>`);
 	}
 
+	const turns: string[] = [];
 	for (const msg of context.messages) {
 		const text = extractMessageText(msg);
 		if (!text) continue;
-
-		const label = msg.role === "user" ? "User" : msg.role === "assistant" ? "Assistant" : "System";
-		parts.push(`[${label}]\n${text}`);
+		const tag =
+			msg.role === "user" ? "user_message" : msg.role === "assistant" ? "assistant_message" : "system_message";
+		turns.push(`<${tag}>\n${text}\n</${tag}>`);
+	}
+	if (turns.length > 0) {
+		parts.push(`<conversation_history>\n${turns.join("\n")}\n</conversation_history>`);
 	}
 
 	return parts.join("\n\n");
@@ -274,6 +314,67 @@ export function parseAskUserQuestionsElicitation(
 	return questions.length > 0 ? questions : null;
 }
 
+function isSecureElicitationField(
+	requestMessage: string,
+	fieldId: string,
+	field: SdkElicitationFieldSchema,
+): boolean {
+	if (field.format === "password") return true;
+	if (field.writeOnly === true) return true;
+
+	const rawField = field as Record<string, unknown>;
+	if (rawField.sensitive === true || rawField["x-sensitive"] === true) return true;
+
+	const haystack = [
+		requestMessage,
+		fieldId.replace(/[_-]+/g, " "),
+		typeof field.title === "string" ? field.title : "",
+		typeof field.description === "string" ? field.description : "",
+	]
+		.join(" ")
+		.toLowerCase();
+
+	return SENSITIVE_FIELD_PATTERN.test(haystack);
+}
+
+export function parseTextInputElicitation(
+	request: Pick<SdkElicitationRequest, "message" | "mode" | "requestedSchema">,
+): ParsedTextInputField[] | null {
+	if (request.mode && request.mode !== "form") return null;
+	const schema = request.requestedSchema as
+		| ({ properties?: Record<string, SdkElicitationFieldSchema>; keys?: Record<string, SdkElicitationFieldSchema> } & Record<string, unknown>)
+		| undefined;
+	const fieldsSource = schema?.properties && typeof schema.properties === "object"
+		? schema.properties
+		: schema?.keys && typeof schema.keys === "object"
+			? schema.keys
+			: undefined;
+	if (!fieldsSource) return null;
+
+	const requiredSet = new Set(
+		Array.isArray(request.requestedSchema?.required)
+			? request.requestedSchema.required.filter((value): value is string => typeof value === "string")
+			: [],
+	);
+
+	const fields: ParsedTextInputField[] = [];
+	for (const [fieldId, field] of Object.entries(fieldsSource)) {
+		if (!field || typeof field !== "object") continue;
+		if (field.type !== "string") continue;
+		if (Array.isArray(field.oneOf) && field.oneOf.length > 0) continue;
+
+		fields.push({
+			id: fieldId,
+			title: typeof field.title === "string" && field.title.length > 0 ? field.title : fieldId,
+			description: typeof field.description === "string" ? field.description : "",
+			required: requiredSet.has(fieldId),
+			secure: isSecureElicitationField(request.message, fieldId, field),
+		});
+	}
+
+	return fields.length > 0 ? fields : null;
+}
+
 export function roundResultToElicitationContent(
 	questions: ParsedElicitationQuestion[],
 	result: RoundResult,
@@ -355,6 +456,52 @@ async function promptElicitationWithDialogs(
 	return { action: "accept", content };
 }
 
+function buildTextInputPromptTitle(request: SdkElicitationRequest, field: ParsedTextInputField): string {
+	const parts = [
+		request.serverName ? `[${request.serverName}]` : "",
+		field.title,
+		field.description,
+	].filter((part) => typeof part === "string" && part.trim().length > 0);
+	return parts.join("\n\n");
+}
+
+function buildTextInputPlaceholder(field: ParsedTextInputField): string | undefined {
+	const desc = field.description.trim();
+	if (!desc) return field.required ? "Required" : "Leave empty to skip";
+
+	const formatLine = desc
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.find((line) => /^format:/i.test(line));
+
+	if (!formatLine) return field.required ? "Required" : "Leave empty to skip";
+	const hint = formatLine.replace(/^format:\s*/i, "").trim();
+	return hint.length > 0 ? hint : field.required ? "Required" : "Leave empty to skip";
+}
+
+async function promptTextInputElicitation(
+	request: SdkElicitationRequest,
+	fields: ParsedTextInputField[],
+	ui: ExtensionUIContext,
+	signal: AbortSignal,
+): Promise<SdkElicitationResult> {
+	const content: Record<string, string | string[]> = {};
+
+	for (const field of fields) {
+		const value = await ui.input(
+			buildTextInputPromptTitle(request, field),
+			buildTextInputPlaceholder(field),
+			{ signal, ...(field.secure ? { secure: true } : {}) },
+		);
+		if (value === undefined) {
+			return { action: "cancel" };
+		}
+		content[field.id] = value;
+	}
+
+	return { action: "accept", content };
+}
+
 export function createClaudeCodeElicitationHandler(
 	ui: ExtensionUIContext | undefined,
 ): ((request: SdkElicitationRequest, options: { signal: AbortSignal }) => Promise<SdkElicitationResult>) | undefined {
@@ -366,20 +513,46 @@ export function createClaudeCodeElicitationHandler(
 		}
 
 		const questions = parseAskUserQuestionsElicitation(request);
-		if (!questions) {
-			return { action: "decline" };
+		if (questions) {
+			const interviewResult = await showInterviewRound(questions, { signal }, { ui } as any).catch(() => undefined);
+			if (interviewResult && Object.keys(interviewResult.answers).length > 0) {
+				return {
+					action: "accept",
+					content: roundResultToElicitationContent(questions, interviewResult),
+				};
+			}
+
+			return promptElicitationWithDialogs(request, questions, ui, signal);
 		}
 
-		const interviewResult = await showInterviewRound(questions, { signal }, { ui } as any).catch(() => undefined);
-		if (interviewResult && Object.keys(interviewResult.answers).length > 0) {
-			return {
-				action: "accept",
-				content: roundResultToElicitationContent(questions, interviewResult),
-			};
+		const textFields = parseTextInputElicitation(request);
+		if (textFields) {
+			return promptTextInputElicitation(request, textFields, ui, signal);
 		}
 
-		return promptElicitationWithDialogs(request, questions, ui, signal);
+		return { action: "decline" };
 	};
+}
+
+/**
+ * Aborted by the caller's AbortSignal — distinct from exhaustion. GSD's
+ * agent loop keys off `stopReason === "aborted"` to treat this as a clean
+ * user cancel instead of a retry-eligible provider failure.
+ */
+export function makeAbortedMessage(model: string, lastTextContent: string): AssistantMessage {
+	const message: AssistantMessage = {
+		role: "assistant",
+		content: lastTextContent
+			? [{ type: "text", text: lastTextContent }]
+			: [{ type: "text", text: "Claude Code stream aborted by caller" }],
+		api: "anthropic-messages",
+		provider: "claude-code",
+		model,
+		usage: { ...ZERO_USAGE },
+		stopReason: "aborted",
+		timestamp: Date.now(),
+	};
+	return message;
 }
 
 // ---------------------------------------------------------------------------
@@ -387,27 +560,78 @@ export function createClaudeCodeElicitationHandler(
 // ---------------------------------------------------------------------------
 
 /**
+ * Resolve the Claude Code permission mode for the current run.
+ *
+ * GSD subagents run underneath a host Claude Code session the user has
+ * already consented to, and their work (edits, shell inspection, MCP calls)
+ * spans the full workflow toolset. Defaulting the inner SDK to
+ * `bypassPermissions` avoids per-tool approval prompts that offer no
+ * meaningful safety beyond what the host session and the subagent prompts
+ * already enforce. `GSD_CLAUDE_CODE_PERMISSION_MODE` lets security-conscious
+ * users opt into a stricter mode (`acceptEdits`, `default`, `plan`).
+ *
+ * Tradeoff: bypass means a prompt-injection payload read from an untrusted
+ * file could trigger tool calls without a second gate. Accepted for GSD
+ * because the workflow is explicit user intent and the alternative
+ * (#4099) is continuous approval fatigue that blocks real work.
+ */
+export async function resolveClaudePermissionMode(
+	env: NodeJS.ProcessEnv = process.env,
+): Promise<"bypassPermissions" | "acceptEdits" | "default" | "plan"> {
+	const override = env.GSD_CLAUDE_CODE_PERMISSION_MODE?.trim();
+	if (override === "bypassPermissions" || override === "acceptEdits" || override === "default" || override === "plan") {
+		return override;
+	}
+	return "bypassPermissions";
+}
+
+/**
  * Build the options object passed to the Claude Agent SDK's `query()` call.
  *
  * Extracted for testability — callers can verify session persistence,
  * beta flags, and other configuration without mocking the full SDK.
+ *
+ * `permissionMode` / `allowDangerouslySkipPermissions` are resolved through
+ * {@link resolveClaudePermissionMode} so interactive runs don't silently
+ * bypass the SDK's permission gate. Callers that want the old always-bypass
+ * behaviour pass `permissionMode: "bypassPermissions"` explicitly.
  */
 export function buildSdkOptions(
 	modelId: string,
 	prompt: string,
+	overrides?: { permissionMode?: "bypassPermissions" | "acceptEdits" | "default" | "plan" },
 	extraOptions: Record<string, unknown> = {},
 ): Record<string, unknown> {
 	const mcpServers = buildWorkflowMcpServers();
+	const permissionMode = overrides?.permissionMode ?? "bypassPermissions";
+	const disallowedTools = ["AskUserQuestion"];
+	// Pre-authorize the safe built-ins and every registered workflow MCP
+	// server's tools. `acceptEdits` mode (the interactive default) only
+	// auto-approves file edits — Read/Glob/Grep, basic shell inspection, and
+	// every `mcp__gsd-workflow__*` call still surface as "This command
+	// requires approval" and block GSD actions (#4099).
+	const allowedTools = [
+		"Read",
+		"Write",
+		"Edit",
+		"Glob",
+		"Grep",
+		"Bash(ls:*)",
+		"Bash(pwd)",
+		...(mcpServers ? Object.keys(mcpServers).map((serverName) => `mcp__${serverName}__*`) : []),
+	];
 	return {
 		pathToClaudeCodeExecutable: getClaudePath(),
 		model: modelId,
 		includePartialMessages: true,
 		persistSession: true,
 		cwd: process.cwd(),
-		permissionMode: "bypassPermissions",
-		allowDangerouslySkipPermissions: true,
+		permissionMode,
+		allowDangerouslySkipPermissions: permissionMode === "bypassPermissions",
 		settingSources: ["project"],
 		systemPrompt: { type: "preset", preset: "claude_code" },
+		disallowedTools,
+		...(allowedTools.length > 0 ? { allowedTools } : {}),
 		...(mcpServers ? { mcpServers } : {}),
 		betas: modelId.includes("sonnet") ? ["context-1m-2025-08-07"] : [],
 		...extraOptions,
@@ -506,16 +730,39 @@ export function extractToolResultsFromSdkUserMessage(message: SDKUserMessage): A
 	return extracted;
 }
 
-function attachExternalResultsToToolCalls(
-	toolCalls: AssistantMessage["content"],
+function attachExternalResultsToToolBlocks(
+	toolBlocks: AssistantMessage["content"],
 	toolResultsById: ReadonlyMap<string, ExternalToolResultPayload>,
 ): void {
-	for (const block of toolCalls) {
-		if (block.type !== "toolCall") continue;
+	for (const block of toolBlocks) {
+		if (block.type !== "toolCall" && block.type !== "serverToolUse") continue;
 		const externalResult = toolResultsById.get(block.id);
 		if (!externalResult) continue;
-		(block as ToolCallWithExternalResult).externalResult = externalResult;
+		(block as ToolCallWithExternalResult & { id: string }).externalResult = externalResult;
 	}
+}
+
+/**
+ * Merge tool-call blocks from the active partial-message builder into the
+ * running list of intermediate tool calls, preserving order and de-duping
+ * by tool-call id. Exposed for testing the F3 fix (final-turn tool calls
+ * dropped when `result` arrives without a preceding synthetic `user`).
+ */
+export function mergePendingToolCalls(
+	intermediate: AssistantMessage["content"],
+	pending: AssistantMessage["content"],
+): AssistantMessage["content"] {
+	const alreadyIncluded = new Set<string>();
+	for (const block of intermediate) {
+		if (block.type === "toolCall") alreadyIncluded.add(block.id);
+	}
+	for (const block of pending) {
+		if (block.type !== "toolCall") continue;
+		if (alreadyIncluded.has(block.id)) continue;
+		alreadyIncluded.add(block.id);
+		intermediate.push(block);
+	}
+	return intermediate;
 }
 
 // ---------------------------------------------------------------------------
@@ -552,8 +799,8 @@ async function pumpSdkMessages(
 	/** Track the last text content seen across all assistant turns for the final message. */
 	let lastTextContent = "";
 	let lastThinkingContent = "";
-	/** Collect tool calls from intermediate SDK turns for tool_execution events. */
-	const intermediateToolCalls: AssistantMessage["content"] = [];
+	/** Collect tool blocks from intermediate SDK turns for tool execution rendering. */
+	const intermediateToolBlocks: AssistantMessage["content"] = [];
 	/** Preserve real external tool results from Claude Code's synthetic user messages. */
 	const toolResultsById = new Map<string, ExternalToolResultPayload>();
 
@@ -574,9 +821,11 @@ async function pumpSdkMessages(
 		}
 
 		const prompt = buildPromptFromContext(context);
+		const permissionMode = await resolveClaudePermissionMode();
 		const sdkOpts = buildSdkOptions(
 			modelId,
 			prompt,
+			{ permissionMode },
 			typeof (options as ClaudeCodeStreamOptions | undefined)?.extensionUIContext === "object"
 				? {
 						onElicitation: createClaudeCodeElicitationHandler(
@@ -608,7 +857,17 @@ async function pumpSdkMessages(
 		stream.push({ type: "start", partial: initialPartial });
 
 		for await (const msg of queryResult as AsyncIterable<SDKMessage>) {
-			if (options?.signal?.aborted) break;
+			if (options?.signal?.aborted) {
+				// User-initiated cancel — emit an aborted error so the agent
+				// loop classifies this as a deliberate stop, not a transient
+				// provider failure that should be retried.
+				stream.push({
+					type: "error",
+					reason: "aborted",
+					error: makeAbortedMessage(modelId, lastTextContent),
+				});
+				return;
+			}
 
 			switch (msg.type) {
 				// -- Init --
@@ -664,9 +923,9 @@ async function pumpSdkMessages(
 								lastTextContent = block.text;
 							} else if (block.type === "thinking" && block.thinking) {
 								lastThinkingContent = block.thinking;
-							} else if (block.type === "toolCall") {
-								// Collect tool calls for externalToolExecution rendering
-								intermediateToolCalls.push(block);
+							} else if (block.type === "toolCall" || block.type === "serverToolUse") {
+								// Collect tool blocks for externalToolExecution rendering
+								intermediateToolBlocks.push(block);
 							}
 						}
 					}
@@ -676,24 +935,33 @@ async function pumpSdkMessages(
 					for (const { toolUseId, result } of extractToolResultsFromSdkUserMessage(msg as SDKUserMessage)) {
 						toolResultsById.set(toolUseId, result);
 					}
-					attachExternalResultsToToolCalls(intermediateToolCalls, toolResultsById);
+					attachExternalResultsToToolBlocks(intermediateToolBlocks, toolResultsById);
 
 					// Push a synthetic toolcall_end for each tool call from this turn
 					// so the TUI can render tool results in real-time during the SDK
 					// session instead of waiting until the entire session completes.
 					if (builder) {
 						for (const block of builder.message.content) {
-							if (block.type !== "toolCall") continue;
 							const extResult = (block as ToolCallWithExternalResult).externalResult;
 							if (!extResult) continue;
-							// Push a toolcall_end with result attached so the chat-controller
-							// can call updateResult on the pending ToolExecutionComponent.
-							stream.push({
-								type: "toolcall_end",
-								contentIndex: builder.message.content.indexOf(block),
-								toolCall: block,
-								partial: builder.message,
-							});
+							const contentIndex = builder.message.content.indexOf(block);
+							if (contentIndex < 0) continue;
+							// Push synthetic completion events with result attached so the
+							// chat-controller can update pending ToolExecutionComponents.
+							if (block.type === "toolCall") {
+								stream.push({
+									type: "toolcall_end",
+									contentIndex,
+									toolCall: block,
+									partial: builder.message,
+								});
+							} else if (block.type === "serverToolUse") {
+								stream.push({
+									type: "server_tool_use",
+									contentIndex,
+									partial: builder.message,
+								});
+							}
 						}
 					}
 
@@ -710,9 +978,19 @@ async function pumpSdkMessages(
 					// events for proper TUI rendering, followed by the text response.
 					const finalContent: AssistantMessage["content"] = [];
 
+					// If the final turn ended without a synthetic user message
+					// (e.g. stop_reason: "tool_use" followed directly by result,
+					// or a turn with text but no tool execution), the `builder`
+					// still holds toolCall blocks that were never pushed into
+					// `intermediateToolBlocks`. Fold them in here so they aren't
+					// dropped from the final AssistantMessage.
+					if (builder) {
+						mergePendingToolCalls(intermediateToolBlocks, builder.message.content);
+					}
+
 					// Add tool calls from intermediate turns first (renders above text)
-					attachExternalResultsToToolCalls(intermediateToolCalls, toolResultsById);
-					finalContent.push(...intermediateToolCalls);
+					attachExternalResultsToToolBlocks(intermediateToolBlocks, toolResultsById);
+					finalContent.push(...intermediateToolBlocks);
 
 					// Add text/thinking from the last turn
 					if (builder && builder.message.content.length > 0) {
@@ -747,11 +1025,7 @@ async function pumpSdkMessages(
 					};
 
 					if (result.is_error) {
-						const errText =
-							"errors" in result
-								? (result as any).errors?.join("; ")
-								: result.subtype;
-						finalMessage.errorMessage = errText;
+						finalMessage.errorMessage = getResultErrorMessage(result);
 						stream.push({ type: "error", reason: "error", error: finalMessage });
 					} else {
 						stream.push({ type: "done", reason: "stop", message: finalMessage });

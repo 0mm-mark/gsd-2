@@ -37,6 +37,17 @@ function createModel(overrides: Partial<Model<Api>> = {}): Model<Api> {
 	} as Model<Api>;
 }
 
+function makeCredentials(
+	overrides: Partial<OAuthCredentials & { modelLimits?: Record<string, { contextWindow: number; maxTokens: number }> }> = {},
+) {
+	return {
+		access: "copilot-token",
+		refresh: "refresh-token",
+		expires: Date.now() + 60_000,
+		...overrides,
+	};
+}
+
 describe("GitHub Copilot OAuth — normalizeDomain", () => {
 	test("returns null for empty input", () => {
 		assert.equal(normalizeDomain(""), null);
@@ -191,4 +202,47 @@ describe("GitHub Copilot OAuth — credential regression", () => {
 		assert.ok(content.includes("NOTE: This credential is public"));
 		assert.ok(content.includes("obfuscated") || content.includes("security scanners"));
 	});
+});
+
+test("githubCopilotOAuthProvider.modifyModels filters unavailable copilot models (#3849)", () => {
+	const models = [
+		createModel({ provider: "github-copilot", id: "gpt-5", name: "gpt-5", baseUrl: "github-copilot:" }),
+		createModel({ provider: "github-copilot", id: "claude-sonnet-4", name: "claude-sonnet-4", baseUrl: "github-copilot:" }),
+		createModel({ provider: "openai", id: "gpt-4.1", name: "gpt-4.1", baseUrl: "openai:" }),
+	];
+
+	assert.ok(githubCopilotOAuthProvider.modifyModels, "github copilot provider should expose modifyModels");
+	const modified = githubCopilotOAuthProvider.modifyModels(
+		models,
+		makeCredentials({
+			modelLimits: {
+				"gpt-5": { contextWindow: 256000, maxTokens: 32000 },
+			},
+		}),
+	);
+
+	assert.deepEqual(
+		modified.map((model) => `${model.provider}/${model.id}`),
+		["github-copilot/gpt-5", "openai/gpt-4.1"],
+	);
+
+	const copilotModel = modified.find((model) => model.provider === "github-copilot" && model.id === "gpt-5");
+	assert.ok(copilotModel, "available copilot model should remain");
+	assert.equal(copilotModel.contextWindow, 256000);
+	assert.equal(copilotModel.maxTokens, 32000);
+	assert.match(copilotModel.baseUrl, /githubcopilot\.com/);
+});
+
+test("githubCopilotOAuthProvider.modifyModels keeps all copilot models when limits are unavailable", () => {
+	const models = [
+		createModel({ provider: "github-copilot", id: "gpt-5", name: "gpt-5", baseUrl: "github-copilot:" }),
+		createModel({ provider: "github-copilot", id: "claude-sonnet-4", name: "claude-sonnet-4", baseUrl: "github-copilot:" }),
+	];
+
+	assert.ok(githubCopilotOAuthProvider.modifyModels, "github copilot provider should expose modifyModels");
+	const modified = githubCopilotOAuthProvider.modifyModels(models, makeCredentials());
+
+	assert.equal(modified.length, 2, "lack of limits should not hide every copilot model");
+	assert.ok(modified.every((model) => model.provider === "github-copilot"));
+	assert.ok(modified.every((model) => model.baseUrl.includes("githubcopilot.com")));
 });

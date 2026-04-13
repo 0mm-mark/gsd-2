@@ -2,7 +2,7 @@
  * MCP Server — registers GSD orchestration, project-state, and workflow tools.
  *
  * Session tools (6): gsd_execute, gsd_status, gsd_result, gsd_cancel, gsd_query, gsd_resolve_blocker
- * Interactive tools (1): ask_user_questions via MCP form elicitation
+ * Interactive tools (2): ask_user_questions, secure_env_collect via MCP form elicitation
  * Read-only tools (6): gsd_progress, gsd_roadmap, gsd_history, gsd_doctor, gsd_captures, gsd_knowledge
  * Workflow tools (29): headless-safe planning, metadata persistence, replanning, completion, validation, reassessment, gate result, status, and journal tools
  *
@@ -22,6 +22,7 @@ import { readCaptures } from './readers/captures.js';
 import { readKnowledge } from './readers/knowledge.js';
 import { runDoctorLite } from './readers/doctor-lite.js';
 import { registerWorkflowTools } from './workflow-tools.js';
+import { applySecrets, checkExistingEnvKeys, detectDestination } from './env-writer.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -54,46 +55,80 @@ function textContent(text: string): { content: Array<{ type: 'text'; text: strin
 // gsd_query filesystem reader
 // ---------------------------------------------------------------------------
 
-async function readProjectState(projectDir: string, _query: string): Promise<Record<string, unknown>> {
+/**
+ * Normalized query categories for {@link readProjectState}.
+ *
+ * Maps user-supplied query strings (or empty) to the set of fields we return.
+ * Accepts common synonyms so the MCP client can pass intuitive values.
+ */
+const QUERY_FIELDS = {
+  all: ['state', 'project', 'requirements', 'milestones'] as const,
+  state: ['state'] as const,
+  status: ['state'] as const,
+  project: ['project'] as const,
+  requirements: ['requirements'] as const,
+  milestones: ['milestones'] as const,
+} as const;
+
+type QueryCategory = keyof typeof QUERY_FIELDS;
+type ProjectStateField = (typeof QUERY_FIELDS)[QueryCategory][number];
+
+function normalizeQuery(query: string | undefined): QueryCategory {
+  const key = (query ?? 'all').trim().toLowerCase();
+  if (key in QUERY_FIELDS) return key as QueryCategory;
+  return 'all';
+}
+
+async function readProjectState(projectDir: string, query: string | undefined): Promise<Record<string, unknown>> {
   const gsdDir = join(resolve(projectDir), '.gsd');
-  const result: Record<string, unknown> = { projectDir: resolve(projectDir) };
+  const category = normalizeQuery(query);
+  const wanted = new Set<ProjectStateField>(QUERY_FIELDS[category]);
 
-  // STATE.md — current execution state
-  try {
-    result.state = await readFile(join(gsdDir, 'STATE.md'), 'utf-8');
-  } catch {
-    result.state = null;
-  }
+  const result: Record<string, unknown> = {
+    projectDir: resolve(projectDir),
+    query: category,
+  };
 
-  // PROJECT.md — project description
-  try {
-    result.project = await readFile(join(gsdDir, 'PROJECT.md'), 'utf-8');
-  } catch {
-    result.project = null;
-  }
-
-  // REQUIREMENTS.md — requirement contract
-  try {
-    result.requirements = await readFile(join(gsdDir, 'REQUIREMENTS.md'), 'utf-8');
-  } catch {
-    result.requirements = null;
-  }
-
-  // List milestones with basic metadata
-  const milestonesDir = join(gsdDir, 'milestones');
-  try {
-    const entries = await readdir(milestonesDir, { withFileTypes: true });
-    const milestones: Array<{ id: string; hasRoadmap: boolean; hasSummary: boolean }> = [];
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const mDir = join(milestonesDir, entry.name);
-      const hasRoadmap = await fileExists(join(mDir, `${entry.name}-ROADMAP.md`));
-      const hasSummary = await fileExists(join(mDir, `${entry.name}-SUMMARY.md`));
-      milestones.push({ id: entry.name, hasRoadmap, hasSummary });
+  if (wanted.has('state')) {
+    try {
+      result.state = await readFile(join(gsdDir, 'STATE.md'), 'utf-8');
+    } catch {
+      result.state = null;
     }
-    result.milestones = milestones;
-  } catch {
-    result.milestones = [];
+  }
+
+  if (wanted.has('project')) {
+    try {
+      result.project = await readFile(join(gsdDir, 'PROJECT.md'), 'utf-8');
+    } catch {
+      result.project = null;
+    }
+  }
+
+  if (wanted.has('requirements')) {
+    try {
+      result.requirements = await readFile(join(gsdDir, 'REQUIREMENTS.md'), 'utf-8');
+    } catch {
+      result.requirements = null;
+    }
+  }
+
+  if (wanted.has('milestones')) {
+    const milestonesDir = join(gsdDir, 'milestones');
+    try {
+      const entries = await readdir(milestonesDir, { withFileTypes: true });
+      const milestones: Array<{ id: string; hasRoadmap: boolean; hasSummary: boolean }> = [];
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const mDir = join(milestonesDir, entry.name);
+        const hasRoadmap = await fileExists(join(mDir, `${entry.name}-ROADMAP.md`));
+        const hasSummary = await fileExists(join(mDir, `${entry.name}-SUMMARY.md`));
+        milestones.push({ id: entry.name, hasRoadmap, hasSummary });
+      }
+      result.milestones = milestones;
+    } catch {
+      result.milestones = [];
+    }
   }
 
   return result;
@@ -112,11 +147,43 @@ async function fileExists(path: string): Promise<boolean> {
 // MCP Server type — minimal interface for the dynamically-imported McpServer
 // ---------------------------------------------------------------------------
 
+interface ElicitResult {
+  action: 'accept' | 'decline' | 'cancel';
+  content?: Record<string, string | number | boolean | string[]>;
+}
+
+interface ElicitRequestFormParams {
+  mode?: 'form';
+  message: string;
+  requestedSchema: {
+    type: 'object';
+    properties: Record<string, Record<string, unknown>>;
+    required?: string[];
+  };
+}
+
+/**
+ * Handler extra — the second argument passed by McpServer.tool handlers.
+ * Contains an AbortSignal scoped to the JSON-RPC request (cancelled when
+ * the client cancels the `tools/call`) plus other per-request metadata.
+ * Tools that can actually be stopped mid-flight should honour `signal`.
+ */
+export interface McpToolExtra {
+  signal?: AbortSignal;
+  requestId?: string | number;
+  sendNotification?: (notification: unknown) => void | Promise<void>;
+}
+
 interface McpServerInstance {
-  tool(name: string, description: string, params: Record<string, unknown>, handler: (args: Record<string, unknown>) => Promise<unknown>): unknown;
+  tool(
+    name: string,
+    description: string,
+    params: Record<string, unknown>,
+    handler: (args: Record<string, unknown>, extra?: McpToolExtra) => Promise<unknown>,
+  ): unknown;
   server: {
     elicitInput(
-      params: AskUserQuestionsElicitRequest,
+      params: AskUserQuestionsElicitRequest | ElicitRequestFormParams,
       options?: unknown,
     ): Promise<AskUserQuestionsElicitResult>;
   };
@@ -282,11 +349,16 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
 
   const server: McpServerInstance = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
-    { capabilities: { tools: {} } },
+    { capabilities: { tools: {}, elicitation: {} } },
   );
 
   // -----------------------------------------------------------------------
-  // gsd_execute — start a new GSD auto-mode session
+  // gsd_execute — start a new GSD auto-mode session.
+  //
+  // If the JSON-RPC request is aborted while the session is starting (or
+  // immediately after), we cancel the session so we don't leak a background
+  // RpcClient process. Once the session is running the caller should use
+  // `gsd_cancel` to stop it via sessionId.
   // -----------------------------------------------------------------------
   server.tool(
     'gsd_execute',
@@ -297,12 +369,20 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
       model: z.string().optional().describe('Model ID override'),
       bare: z.boolean().optional().describe('Run in bare mode (skip user config)'),
     },
-    async (args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>, extra?: McpToolExtra) => {
       const { projectDir, command, model, bare } = args as {
         projectDir: string; command?: string; model?: string; bare?: boolean;
       };
       try {
         const sessionId = await sessionManager.startSession(projectDir, { command, model, bare });
+
+        // If the client aborted while startSession was running, cancel the
+        // newly-created session rather than leaving an orphaned process.
+        if (extra?.signal?.aborted) {
+          await sessionManager.cancelSession(sessionId).catch(() => { /* swallow */ });
+          return errorContent('gsd_execute aborted by client before returning');
+        }
+
         return jsonContent({ sessionId, status: 'started' });
       } catch (err) {
         return errorContent(err instanceof Error ? err.message : String(err));
@@ -395,17 +475,25 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
   );
 
   // -----------------------------------------------------------------------
-  // gsd_query — read project state from filesystem (no session needed)
+  // gsd_query — read project state from filesystem (no session needed).
+  //
+  // `query` is optional: when omitted the tool returns all fields (STATE.md,
+  // PROJECT.md, requirements, milestone listing). Accepted narrow values:
+  // "state" / "status", "project", "requirements", "milestones", "all".
+  // Unknown values fall back to "all" for forward-compatibility.
   // -----------------------------------------------------------------------
   server.tool(
     'gsd_query',
-    'Query GSD project state from the filesystem. Returns STATE.md, PROJECT.md, requirements, and milestone listing. Does not require an active session.',
+    'Query GSD project state from the filesystem. By default returns STATE.md, PROJECT.md, requirements, and milestone listing. Pass `query` to narrow the response (accepted: "state"/"status", "project", "requirements", "milestones", "all"). Does not require an active session.',
     {
       projectDir: z.string().describe('Absolute path to the project directory'),
-      query: z.string().describe('What to query (e.g. "status", "milestones", "requirements")'),
+      query: z
+        .enum(['all', 'state', 'status', 'project', 'requirements', 'milestones'])
+        .optional()
+        .describe('Narrow the response to a single field (default: "all")'),
     },
     async (args: Record<string, unknown>) => {
-      const { projectDir, query } = args as { projectDir: string; query: string };
+      const { projectDir, query } = args as { projectDir: string; query?: string };
       try {
         const state = await readProjectState(projectDir, query);
         return jsonContent(state);
@@ -466,6 +554,124 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
         }
 
         return textContent(formatAskUserQuestionsElicitResult(questions, elicitation));
+      } catch (err) {
+        return errorContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // -----------------------------------------------------------------------
+  // secure_env_collect — collect secrets via MCP form elicitation
+  // -----------------------------------------------------------------------
+  server.tool(
+    'secure_env_collect',
+    'Collect environment variables securely via form input. Values are written directly to .env (or Vercel/Convex) and NEVER appear in tool output — only key names and applied/skipped status are returned. Use this instead of asking users to manually edit .env files or paste secrets into chat.',
+    {
+      projectDir: z.string().describe('Absolute path to the project directory'),
+      keys: z.array(z.object({
+        key: z.string().describe('Env var name, e.g. OPENAI_API_KEY'),
+        hint: z.string().optional().describe('Format hint shown to user, e.g. "starts with sk-"'),
+        guidance: z.array(z.string()).optional().describe('Step-by-step instructions for obtaining this key'),
+      })).min(1).describe('Environment variables to collect'),
+      destination: z.enum(['dotenv', 'vercel', 'convex']).optional().describe('Where to write secrets. Auto-detected from project files if omitted.'),
+      envFilePath: z.string().optional().describe('Path to .env file (dotenv only). Defaults to .env in projectDir.'),
+      environment: z.enum(['development', 'preview', 'production']).optional().describe('Target environment (vercel/convex only)'),
+    },
+    async (args: Record<string, unknown>) => {
+      const { projectDir, keys, destination, envFilePath, environment } = args as {
+        projectDir: string;
+        keys: Array<{ key: string; hint?: string; guidance?: string[] }>;
+        destination?: 'dotenv' | 'vercel' | 'convex';
+        envFilePath?: string;
+        environment?: 'development' | 'preview' | 'production';
+      };
+
+      try {
+        const resolvedProjectDir = resolve(projectDir);
+        const resolvedEnvPath = resolve(resolvedProjectDir, envFilePath ?? '.env');
+
+        // (1) Check which keys already exist
+        const allKeyNames = keys.map((k) => k.key);
+        const existingKeys = await checkExistingEnvKeys(allKeyNames, resolvedEnvPath);
+        const existingSet = new Set(existingKeys);
+        const pendingKeys = keys.filter((k) => !existingSet.has(k.key));
+
+        // If all keys already exist, return immediately
+        if (pendingKeys.length === 0) {
+          const lines = existingKeys.map((k) => `• ${k}: already set`);
+          return textContent(`All ${existingKeys.length} key(s) already set.\n${lines.join('\n')}`);
+        }
+
+        // (2) Build elicitation form — one string field per pending key
+        const properties: Record<string, Record<string, unknown>> = {};
+        const required: string[] = [];
+
+        for (const item of pendingKeys) {
+          const descParts: string[] = [];
+          if (item.hint) descParts.push(`Format: ${item.hint}`);
+          if (item.guidance && item.guidance.length > 0) {
+            descParts.push('How to get this:');
+            item.guidance.forEach((step, i) => descParts.push(`${i + 1}. ${step}`));
+          }
+          descParts.push('Leave empty to skip.');
+
+          properties[item.key] = {
+            type: 'string',
+            title: item.key,
+            description: descParts.join('\n'),
+          };
+          // Don't mark as required — empty string = skip
+        }
+
+        // (3) Elicit input from the MCP client
+        const elicitation = await server.server.elicitInput({
+          message: `Enter values for ${pendingKeys.length} environment variable(s). Values are written directly to the project and never shown to the AI.`,
+          requestedSchema: {
+            type: 'object',
+            properties,
+            required,
+          },
+        });
+
+        if (elicitation.action !== 'accept' || !elicitation.content) {
+          return textContent('secure_env_collect was cancelled by user.');
+        }
+
+        // (4) Separate provided vs skipped from form response
+        const provided: Array<{ key: string; value: string }> = [];
+        const skipped: string[] = [];
+
+        for (const item of pendingKeys) {
+          const raw = elicitation.content[item.key];
+          const value = typeof raw === 'string' ? raw.trim() : '';
+          if (value.length > 0) {
+            provided.push({ key: item.key, value });
+          } else {
+            skipped.push(item.key);
+          }
+        }
+
+        // (5) Auto-detect destination if not specified
+        const resolvedDestination = destination ?? detectDestination(resolvedProjectDir);
+
+        // (6) Write secrets to destination
+        const { applied, errors } = await applySecrets(provided, resolvedDestination, {
+          envFilePath: resolvedEnvPath,
+          environment,
+        });
+
+        // (7) Build result — NEVER include secret values
+        const lines: string[] = [
+          `destination: ${resolvedDestination}${!destination ? ' (auto-detected)' : ''}${environment ? ` (${environment})` : ''}`,
+        ];
+        for (const k of applied) lines.push(`✓ ${k}: applied`);
+        for (const k of skipped) lines.push(`• ${k}: skipped`);
+        for (const k of existingKeys) lines.push(`• ${k}: already set`);
+        for (const e of errors) lines.push(`✗ ${e}`);
+
+        return errors.length > 0 && applied.length === 0
+          ? errorContent(lines.join('\n'))
+          : textContent(lines.join('\n'));
       } catch (err) {
         return errorContent(err instanceof Error ? err.message : String(err));
       }
