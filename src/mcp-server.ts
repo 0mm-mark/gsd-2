@@ -16,13 +16,18 @@ export interface McpToolDef {
   }>
 }
 
-// MCP SDK subpath imports use wildcard exports (./*) that NodeNext resolves
-// at runtime but TypeScript cannot statically type-check. We construct the
-// specifiers dynamically so tsc treats them as `any`.
+// MCP SDK subpath imports use wildcard exports (./*) in @modelcontextprotocol/sdk's
+// package.json export map. The wildcard maps "./foo" → "./dist/cjs/foo" (no .js
+// suffix), so bare subpath specifiers like `${MCP_PKG}/server/stdio` resolve to
+// a non-existent file. Historically the workaround (#3603) used createRequire so
+// the CJS resolver could auto-append `.js`; that no longer works with current
+// Node + SDK releases (#3914) — `_require.resolve` also fails with
+// "Cannot find module .../dist/cjs/server/stdio".
 //
-// Use explicit .js subpaths for modules that are loaded dynamically at runtime.
-// Recent Node / SDK combinations do not reliably resolve the extensionless
-// wildcard targets for `server/stdio` and `types` (#3914).
+// The reliable convention (matching packages/mcp-server/{server,cli}.ts) is to
+// write the `.js` suffix explicitly on every wildcard subpath. Specifiers are
+// built via a template string so TypeScript's NodeNext resolver treats them as
+// `any` and skips static checking.
 const MCP_PKG = '@modelcontextprotocol/sdk'
 
 /**
@@ -45,7 +50,7 @@ export async function startMcpServer(options: {
 }): Promise<void> {
   const { tools, version = '0.0.0' } = options
 
-  const serverMod = await import(`${MCP_PKG}/server`)
+  const serverMod = await import(`${MCP_PKG}/server/index.js`)
   const stdioMod = await import(`${MCP_PKG}/server/stdio.js`)
   const typesMod = await import(`${MCP_PKG}/types.js`)
 
