@@ -234,6 +234,18 @@ export function detectRogueFileWrites(
   return rogues;
 }
 
+export const STEP_COMPLETE_FALLBACK_MESSAGE =
+  "Step complete. Run /clear, then /gsd to continue (or /gsd auto to run continuously).";
+
+export function buildStepCompleteMessage(nextState: import("./types.js").GSDState): string {
+  if (nextState.phase === "complete") {
+    return "Step complete — milestone finished. Run /gsd status to review, or start the next milestone.";
+  }
+  const next = describeNextUnit(nextState);
+  return `Step complete. Next: ${next.label}\n`
+    + `Run /clear, then /gsd to continue (or /gsd auto to run continuously).`;
+}
+
 export interface PreVerificationOpts {
   skipSettleDelay?: boolean;
   skipWorktreeSync?: boolean;
@@ -1032,25 +1044,10 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
   if (s.stepMode) {
     try {
       const nextState = await deriveState(s.basePath);
-      if (nextState.phase === "complete") {
-        ctx.ui.notify(
-          "Step complete — milestone finished. Run /gsd status to review, or start the next milestone.",
-          "info",
-        );
-      } else {
-        const next = describeNextUnit(nextState);
-        ctx.ui.notify(
-          `Step complete. Next: ${next.label}\n`
-          + `Run /clear, then /gsd to continue (or /gsd auto to run continuously).`,
-          "info",
-        );
-      }
+      ctx.ui.notify(buildStepCompleteMessage(nextState), "info");
     } catch (e) {
       debugLog("postUnit", { phase: "step-wizard-notify", error: String(e) });
-      ctx.ui.notify(
-        "Step complete. Run /clear, then /gsd to continue (or /gsd auto to run continuously).",
-        "info",
-      );
+      ctx.ui.notify(STEP_COMPLETE_FALLBACK_MESSAGE, "info");
     }
     return "step-wizard";
   }
