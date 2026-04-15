@@ -13,6 +13,8 @@ import {
   loadDebugSession,
   slugifyDebugSessionIssue,
   updateDebugSession,
+  type DebugCheckpoint,
+  type DebugTddGate,
 } from "../debug-session-store.ts";
 
 function makeBase(): string {
@@ -205,6 +207,174 @@ describe("debug-session-store: malformed artifacts + negative paths", () => {
 
       createDebugSession(base, { issue: "First session" });
       assert.equal(existsSync(dir), true);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("debug-session-store: checkpoint and tddGate fields", () => {
+  test("checkpoint round-trip: update with checkpoint, load, verify fields intact", () => {
+    const base = makeBase();
+    try {
+      createDebugSession(base, { issue: "Checkpoint test" });
+
+      const checkpoint: DebugCheckpoint = {
+        type: "human-verify",
+        summary: "OAuth redirect URL is misconfigured",
+        awaitingResponse: true,
+        userResponse: "The redirect URL points to staging, not production",
+      };
+      updateDebugSession(base, "checkpoint-test", { checkpoint });
+
+      const loaded = loadDebugSession(base, "checkpoint-test");
+      assert.ok(loaded !== null);
+      assert.deepEqual(loaded.session.checkpoint, checkpoint);
+      assert.equal(loaded.session.checkpoint?.type, "human-verify");
+      assert.equal(loaded.session.checkpoint?.awaitingResponse, true);
+      assert.equal(loaded.session.checkpoint?.userResponse, "The redirect URL points to staging, not production");
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  test("tddGate round-trip: update with tddGate, load, verify fields intact", () => {
+    const base = makeBase();
+    try {
+      createDebugSession(base, { issue: "TDD gate test" });
+
+      const tddGate: DebugTddGate = {
+        enabled: true,
+        phase: "red",
+        testFile: "src/auth/oauth.test.ts",
+        testName: "handles OAuth callback redirect",
+        failureOutput: "Expected redirect to /dashboard, got /login",
+      };
+      updateDebugSession(base, "tdd-gate-test", { tddGate });
+
+      const loaded = loadDebugSession(base, "tdd-gate-test");
+      assert.ok(loaded !== null);
+      assert.deepEqual(loaded.session.tddGate, tddGate);
+      assert.equal(loaded.session.tddGate?.enabled, true);
+      assert.equal(loaded.session.tddGate?.phase, "red");
+      assert.equal(loaded.session.tddGate?.testFile, "src/auth/oauth.test.ts");
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  test("null-clearing: update with checkpoint then null clears it", () => {
+    const base = makeBase();
+    try {
+      createDebugSession(base, { issue: "Clear checkpoint test" });
+
+      const checkpoint: DebugCheckpoint = {
+        type: "decision",
+        summary: "Needs design decision before continuing",
+        awaitingResponse: false,
+      };
+      updateDebugSession(base, "clear-checkpoint-test", { checkpoint });
+
+      // Verify it was set
+      const withCheckpoint = loadDebugSession(base, "clear-checkpoint-test");
+      assert.ok(withCheckpoint?.session.checkpoint !== null && withCheckpoint?.session.checkpoint !== undefined);
+
+      // Clear it
+      updateDebugSession(base, "clear-checkpoint-test", { checkpoint: null });
+
+      const cleared = loadDebugSession(base, "clear-checkpoint-test");
+      assert.ok(cleared !== null);
+      assert.equal(cleared.session.checkpoint, null);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  test("backward compat: existing artifact without checkpoint/tddGate fields validates successfully", () => {
+    const base = makeBase();
+    try {
+      // Write a minimal valid artifact that lacks checkpoint and tddGate — simulates S02 artifact
+      const sessionsDir = debugSessionsDir(base);
+      mkdirSync(sessionsDir, { recursive: true });
+      const artifact = {
+        version: 1,
+        mode: "debug",
+        slug: "legacy-session",
+        issue: "Legacy issue without new fields",
+        status: "active",
+        phase: "queued",
+        createdAt: 1000,
+        updatedAt: 1000,
+        logPath: join(base, ".gsd", "debug", "legacy-session.log"),
+        lastError: null,
+      };
+      writeFileSync(join(sessionsDir, "legacy-session.json"), JSON.stringify(artifact, null, 2), "utf-8");
+
+      const loaded = loadDebugSession(base, "legacy-session");
+      assert.ok(loaded !== null, "legacy artifact should load successfully");
+      assert.equal(loaded.session.slug, "legacy-session");
+      assert.equal(loaded.session.checkpoint, undefined);
+      assert.equal(loaded.session.tddGate, undefined);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  test("validator rejects malformed checkpoint — missing required sub-fields", () => {
+    const base = makeBase();
+    try {
+      const sessionsDir = debugSessionsDir(base);
+      mkdirSync(sessionsDir, { recursive: true });
+      // checkpoint present but missing 'awaitingResponse'
+      const artifact = {
+        version: 1,
+        mode: "debug",
+        slug: "bad-checkpoint",
+        issue: "Bad checkpoint",
+        status: "active",
+        phase: "queued",
+        createdAt: 1000,
+        updatedAt: 1000,
+        logPath: join(base, ".gsd", "debug", "bad-checkpoint.log"),
+        lastError: null,
+        checkpoint: { type: "human-verify", summary: "Something" /* awaitingResponse missing */ },
+      };
+      writeFileSync(join(sessionsDir, "bad-checkpoint.json"), JSON.stringify(artifact, null, 2), "utf-8");
+
+      assert.throws(
+        () => loadDebugSession(base, "bad-checkpoint"),
+        /Malformed debug session artifact/,
+      );
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  test("validator rejects malformed tddGate — missing required sub-fields", () => {
+    const base = makeBase();
+    try {
+      const sessionsDir = debugSessionsDir(base);
+      mkdirSync(sessionsDir, { recursive: true });
+      // tddGate present but missing 'enabled' and 'phase'
+      const artifact = {
+        version: 1,
+        mode: "debug",
+        slug: "bad-tddgate",
+        issue: "Bad tddGate",
+        status: "active",
+        phase: "queued",
+        createdAt: 1000,
+        updatedAt: 1000,
+        logPath: join(base, ".gsd", "debug", "bad-tddgate.log"),
+        lastError: null,
+        tddGate: { testFile: "some.test.ts" /* enabled and phase missing */ },
+      };
+      writeFileSync(join(sessionsDir, "bad-tddgate.json"), JSON.stringify(artifact, null, 2), "utf-8");
+
+      assert.throws(
+        () => loadDebugSession(base, "bad-tddgate"),
+        /Malformed debug session artifact/,
+      );
     } finally {
       rmSync(base, { recursive: true, force: true });
     }

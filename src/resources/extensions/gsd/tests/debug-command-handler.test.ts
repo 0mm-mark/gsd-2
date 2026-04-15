@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 
 import { handleDebug, parseDebugCommand } from "../commands-debug.ts";
 import { createDebugSession, debugSessionArtifactPath } from "../debug-session-store.ts";
+import { loadPrompt } from "../prompt-loader.ts";
 
 function makeBase(): string {
   const base = mkdtempSync(join(tmpdir(), "gsd-debug-command-"));
@@ -578,5 +579,25 @@ describe("handleDebug lifecycle", () => {
       process.chdir(saved);
       rmSync(base, { recursive: true, force: true });
     }
+  });
+});
+
+describe("debug-session-manager prompt template", () => {
+  test("loadPrompt('debug-session-manager') returns content with all structured return header keywords", () => {
+    const content = loadPrompt("debug-session-manager", {
+      slug: "auth-flake",
+      mode: "debug",
+      issue: "Login fails on Safari",
+      workingDirectory: "/repo",
+      goal: "find_root_cause_only",
+      checkpointContext: "",
+      tddContext: "",
+    });
+
+    assert.match(content, /## ROOT CAUSE FOUND/);
+    assert.match(content, /## TDD CHECKPOINT/);
+    assert.match(content, /## CHECKPOINT REACHED/);
+    assert.match(content, /## DEBUG COMPLETE/);
+    assert.match(content, /## INVESTIGATION INCONCLUSIVE/);
   });
 });

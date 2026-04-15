@@ -5,6 +5,21 @@ import { gsdRoot } from "./paths.js";
 
 export type DebugSessionStatus = "active" | "paused" | "resolved" | "failed";
 
+export interface DebugCheckpoint {
+  type: "human-verify" | "human-action" | "decision" | "root-cause-found" | "inconclusive";
+  summary: string;
+  awaitingResponse: boolean;
+  userResponse?: string;
+}
+
+export interface DebugTddGate {
+  enabled: boolean;
+  phase: "pending" | "red" | "green";
+  testFile?: string;
+  testName?: string;
+  failureOutput?: string;
+}
+
 export interface DebugSessionArtifact {
   version: 1;
   mode: "debug" | "diagnose";
@@ -16,6 +31,8 @@ export interface DebugSessionArtifact {
   updatedAt: number;
   logPath: string;
   lastError: string | null;
+  checkpoint?: DebugCheckpoint | null;
+  tddGate?: DebugTddGate | null;
 }
 
 export interface DebugSessionRecord {
@@ -47,6 +64,8 @@ export interface UpdateDebugSessionInput {
   issue?: string;
   lastError?: string | null;
   updatedAt?: number;
+  checkpoint?: DebugCheckpoint | null;
+  tddGate?: DebugTddGate | null;
 }
 
 export interface DebugSessionStoreDeps {
@@ -113,6 +132,31 @@ function isDebugSessionStatus(value: unknown): value is DebugSessionStatus {
   return value === "active" || value === "paused" || value === "resolved" || value === "failed";
 }
 
+function isDebugCheckpointShape(value: unknown): value is DebugCheckpoint {
+  if (!value || typeof value !== "object") return false;
+  const o = value as Record<string, unknown>;
+  const validTypes = ["human-verify", "human-action", "decision", "root-cause-found", "inconclusive"];
+  return (
+    validTypes.includes(o.type as string)
+    && typeof o.summary === "string"
+    && typeof o.awaitingResponse === "boolean"
+    && (o.userResponse === undefined || typeof o.userResponse === "string")
+  );
+}
+
+function isDebugTddGateShape(value: unknown): value is DebugTddGate {
+  if (!value || typeof value !== "object") return false;
+  const o = value as Record<string, unknown>;
+  const validPhases = ["pending", "red", "green"];
+  return (
+    typeof o.enabled === "boolean"
+    && validPhases.includes(o.phase as string)
+    && (o.testFile === undefined || typeof o.testFile === "string")
+    && (o.testName === undefined || typeof o.testName === "string")
+    && (o.failureOutput === undefined || typeof o.failureOutput === "string")
+  );
+}
+
 function isDebugSessionArtifact(value: unknown): value is DebugSessionArtifact {
   if (!value || typeof value !== "object") return false;
   const o = value as Record<string, unknown>;
@@ -127,6 +171,8 @@ function isDebugSessionArtifact(value: unknown): value is DebugSessionArtifact {
     && typeof o.updatedAt === "number"
     && typeof o.logPath === "string"
     && (typeof o.lastError === "string" || o.lastError === null)
+    && (o.checkpoint === undefined || o.checkpoint === null || isDebugCheckpointShape(o.checkpoint))
+    && (o.tddGate === undefined || o.tddGate === null || isDebugTddGateShape(o.tddGate))
   );
 }
 
@@ -294,6 +340,8 @@ export function updateDebugSession(
     status: nextStatus,
     phase: update.phase ?? loaded.session.phase,
     lastError: update.lastError === undefined ? loaded.session.lastError : update.lastError,
+    checkpoint: update.checkpoint === undefined ? loaded.session.checkpoint : update.checkpoint,
+    tddGate: update.tddGate === undefined ? loaded.session.tddGate : update.tddGate,
     updatedAt: nextUpdatedAt,
   };
 
