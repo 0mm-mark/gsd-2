@@ -546,11 +546,18 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 				host.loadingAnimation = undefined;
 				host.statusContainer.clear();
 			}
-			if (host.streamingComponent) {
-				host.chatContainer.removeChild(host.streamingComponent);
-				host.streamingComponent = undefined;
-				host.streamingMessage = undefined;
+			// If message_end did not already finalize the streaming component
+			// (e.g. abort path or event ordering edge case), finalize it now
+			// instead of removing it. Calling removeChild would erase the last
+			// assistant message from the chat history (issue #4197).
+			if (host.streamingComponent && host.streamingMessage) {
+				host.streamingComponent.setShowMetadata(true);
+				host.streamingComponent.updateContent(host.streamingMessage);
 			}
+			host.streamingComponent = undefined;
+			host.streamingMessage = undefined;
+			renderedSegments = [];
+			lastContentLength = 0;
 			host.pendingTools.clear();
 			// Pinned output is only useful while work is actively streaming.
 			// Keep chat history as the single source after completion.
