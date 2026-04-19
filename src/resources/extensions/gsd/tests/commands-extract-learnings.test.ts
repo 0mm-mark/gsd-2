@@ -614,7 +614,9 @@ describe("complete-milestone loadPrompt round-trip (#4429)", () => {
     // Placeholder must be gone — real content must be in.
     assert.ok(!rendered.includes("{{extractLearningsSteps}}"));
     assert.ok(rendered.includes("Structured Learnings Extraction"));
-    assert.ok(rendered.includes("gsd_save_decision"));
+    // ADR-013 cutover: gsd_save_decision is no longer in the rendered block;
+    // the new persistence path is capture_thought with structuredFields.
+    assert.ok(rendered.includes("capture_thought"));
     assert.ok(rendered.includes("M123"));
   });
 });

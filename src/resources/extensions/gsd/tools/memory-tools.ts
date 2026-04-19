@@ -263,6 +263,15 @@ function includeSupersededMemories(rankedActive: Memory[]): Memory[] {
           /* leave empty */
         }
       }
+      let structuredFields: Record<string, unknown> | null = null;
+      if (typeof row["structured_fields"] === "string" && (row["structured_fields"] as string).length > 0) {
+        try {
+          const parsed = JSON.parse(row["structured_fields"] as string);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            structuredFields = parsed as Record<string, unknown>;
+          }
+        } catch { /* leave null */ }
+      }
       return {
         seq: row["seq"] as number,
         id: row["id"] as string,
@@ -277,6 +286,7 @@ function includeSupersededMemories(rankedActive: Memory[]): Memory[] {
         hit_count: row["hit_count"] as number,
         scope: (row["scope"] as string) ?? "project",
         tags,
+        structured_fields: structuredFields,
       };
     });
   } catch {

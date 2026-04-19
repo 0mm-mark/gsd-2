@@ -34,10 +34,11 @@ interface DecisionRow {
 /**
  * Backfill active decisions rows into the memories table.
  *
- * - Idempotent: every row written carries
- *   `structured_fields.sourceDecisionId = <decisionId>`. If even one such
- *   memory exists when the function is called, the backfill assumes prior
- *   completion and exits.
+ * - Idempotent (per-row): every row written carries
+ *   `structured_fields.sourceDecisionId = "<decisionId>"`. Each candidate
+ *   decision is checked individually; only decisions whose id is already
+ *   present in the memory store are skipped. A user-authored memory with
+ *   their own `sourceDecisionId` does NOT abort the backfill.
  * - Best-effort: never throws. Logs and returns 0 on failure so a broken
  *   backfill cannot block agent startup.
  * - Active-only: skips rows where `superseded_by IS NOT NULL`. Superseded
@@ -54,19 +55,20 @@ export function backfillDecisionsToMemories(): number {
   if (!adapter) return 0;
 
   try {
-    // Idempotency check — any memory tagged with a sourceDecisionId means
-    // the backfill ran previously. The LIKE is cheap; structured_fields is
-    // small JSON and rarely matched against this token in normal use.
-    const sentinel = adapter
-      .prepare("SELECT 1 FROM memories WHERE structured_fields LIKE '%\"sourceDecisionId\"%' LIMIT 1")
-      .get();
-    if (sentinel) return 0;
-
     const decisions = adapter
       .prepare("SELECT id, when_context, scope, decision, choice, rationale, made_by, revisable, superseded_by FROM decisions WHERE superseded_by IS NULL")
       .all() as Array<Record<string, unknown>>;
 
     if (decisions.length === 0) return 0;
+
+    // Per-row idempotency: each memory backfilled from a decision carries
+    // structured_fields.sourceDecisionId="<decisionId>". Skipping is decided
+    // per row by matching that exact id, NOT by a global sentinel — a global
+    // sentinel would silently abort the backfill if a user manually called
+    // capture_thought with their own structuredFields.sourceDecisionId.
+    const checkExisting = adapter.prepare(
+      "SELECT 1 FROM memories WHERE structured_fields LIKE :pattern LIMIT 1",
+    );
 
     let written = 0;
     for (const raw of decisions) {
@@ -82,6 +84,10 @@ export function backfillDecisionsToMemories(): number {
         superseded_by: raw["superseded_by"] == null ? null : String(raw["superseded_by"]),
       };
       if (!row.id) continue;
+
+      // Pattern is anchored to the JSON-stringified shape and the exact
+      // decision id to avoid prefix collisions (e.g. "D1" vs "D10").
+      if (checkExisting.get({ ":pattern": `%"sourceDecisionId":"${row.id}"%` })) continue;
 
       const content = synthesizeContent(row);
       const id = createMemory({

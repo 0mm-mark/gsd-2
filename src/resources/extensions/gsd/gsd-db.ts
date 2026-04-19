@@ -1163,7 +1163,10 @@ function migrateSchema(db: DbAdapter): void {
       // scope/decision/choice/rationale/made_by/revisable) on memories rows so
       // the eventual decisions->memories cutover does not lose schema fidelity.
       // Nullable JSON column — existing rows stay NULL until backfilled in Step 5.
-      db.prepare("ALTER TABLE memories ADD COLUMN structured_fields TEXT DEFAULT NULL").run();
+      // Use ensureColumn for race-safety (matches v15-v18 pattern; bare ALTER
+      // throws "duplicate column" on the loser of a concurrent open race even
+      // though the transaction wrapper protects the schema_version row).
+      ensureColumn(db, "memories", "structured_fields", "ALTER TABLE memories ADD COLUMN structured_fields TEXT DEFAULT NULL");
       db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
         ":version": 21,
         ":applied_at": new Date().toISOString(),
