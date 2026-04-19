@@ -71,7 +71,7 @@ Iterate on feedback until the user approves the breakdown. Do not proceed to Ste
 
 Once approved, write or update `M###-ROADMAP.md` matching the template exactly. Critical format (parsers depend on it):
 
-```
+```markdown
 - [ ] **S01: Title** `risk:high` `depends:[]`
   > After this: one sentence showing what's demoable
 - [ ] **S02: Title** `risk:medium` `depends:[S01]`

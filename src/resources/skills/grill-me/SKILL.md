@@ -37,7 +37,7 @@ If the plan touches unfamiliar code, spawn `Agent(subagent_type=Explore)` in par
 
 Pick the root decision — the one that the most other decisions depend on. Format:
 
-```
+```text
 **Q1:** <precise question>.
 
 **Recommendation:** <your pick>, because <one sentence>.

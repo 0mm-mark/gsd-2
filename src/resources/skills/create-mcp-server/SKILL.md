@@ -35,7 +35,7 @@ Invocation points:
 
 Skeleton:
 
-```
+```text
 server/
   src/
     index.ts         # MCP entry point — stdio or sse transport

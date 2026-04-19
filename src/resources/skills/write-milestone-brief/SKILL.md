@@ -54,10 +54,18 @@ Populate `M###-CONTEXT.md` using the template. Key sections:
 - **Completion Class** — contract / integration / operational. Be honest about what level of proof is required.
 - **Final Integrated Acceptance** — the real end-to-end scenarios that must pass. Name things that cannot be simulated.
 - **Architectural Decisions** — one `### Decision Title` block per decision, with rationale and alternatives considered. If there were no architectural decisions, write "None — straightforward execution" and skip the subsections.
+- **Error Handling Strategy** — approach for failures, edge cases, and error propagation. Include retry policies, fallback behaviors, and user-facing error messages where relevant.
 - **Risks and Unknowns** — only real ones. Do not invent risks.
 - **Existing Codebase / Prior Art** — module names, not line numbers. Brief description of how each relates.
-- **Scope In / Out** — be specific about what is out of scope, especially tempting adjacent work.
+- **Relevant Requirements** — requirement IDs this milestone advances and how.
+- **Scope** — In Scope / Out of Scope / Non-Goals. Be specific about tempting adjacent work that is out.
+- **Technical Constraints** — binding constraints (runtime, platform, dependencies, performance budgets).
+- **Integration Points** — external systems/services this milestone touches and how.
+- **Testing Requirements** — test types (unit, integration, e2e), coverage expectations, and specific scenarios that must pass.
+- **Acceptance Criteria** — per-slice, testable criteria gathered during discussion.
 - **Open Questions** — anything material that is genuinely unresolved. Note current thinking so future agents have a starting point.
+
+> The template headings above are mandatory — do not omit, rename, or reorder them. The exact required order matches `src/resources/extensions/gsd/templates/context.md`: Project Description → Why This Milestone → User-Visible Outcome → Completion Class → Final Integrated Acceptance → Architectural Decisions → Error Handling Strategy → Risks and Unknowns → Existing Codebase / Prior Art → Relevant Requirements → Scope → Technical Constraints → Integration Points → Testing Requirements → Acceptance Criteria → Open Questions.
 
 ## Step 5: Write it
 

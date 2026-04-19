@@ -23,7 +23,7 @@ Invocation points:
 
 **PROJECT-LOCAL, NOT USER-GLOBAL.** Write to `.claude/skills/` in the repo, not `~/.claude/skills/`. The skill encodes project-specific choices that should not leak into unrelated projects.
 
-**DESCRIPTION IS THE TRIGGER.** The `description` field in frontmatter is how the agent decides whether to load the skill. Write it as keywords the future agent will encounter — not a summary.
+**DESCRIPTION IS THE DISCOVERABILITY SIGNAL.** The `description` field in frontmatter is the primary signal the agent uses to judge relevance and decide whether to load the skill — it is a heuristic, not a deterministic trigger. Write it as keywords the future agent will plausibly encounter, not a summary.
 </core_principle>
 
 <process>

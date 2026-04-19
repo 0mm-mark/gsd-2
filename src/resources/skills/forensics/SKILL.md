@@ -30,7 +30,7 @@ Invocation points:
 </context>
 
 <core_principle>
-**READ-ONLY.** Forensics touches no live state. No `gsd_*` writes, no command execution, no filesystem changes outside the final report. The evidence must stay pristine for future investigations.
+**READ-ONLY.** Forensics touches no live state. Non-mutating inspection commands (e.g., `ps`, `top -b`, `cat /proc/*`) are allowed for checking process status or reading system files. Strictly prohibited: `gsd_*` writes, commands that modify state, executing binaries that produce side effects, writing to files (outside the final report), or re-running the failed unit. The evidence must stay pristine for future investigations.
 
 **SYMPTOM → ROOT CAUSE, WITH CITATIONS.** Every claim in the report is backed by an artifact path and either a line number or a JSONL field. "The loop got stuck because of a race" is not useful; "`.gsd/journal/2026-04-19.jsonl:142` shows `stuck-detected` with flowId X, caused by `dispatch-guard.ts:87` returning the same unit after `unit-end`" is.
 
@@ -43,7 +43,7 @@ Invocation points:
 
 Read what's in `.gsd/`:
 
-1. `auto.lock` — is it stale? Check PID against `ps`. Stale = crash.
+1. `auto.lock` — is it stale? Check PID against `ps` (read-only inspection, allowed). Stale = crash.
 2. Most recent `.gsd/activity/*.jsonl` — sort by mtime, newest first. That's the last unit that ran.
 3. Today's `.gsd/journal/YYYY-MM-DD.jsonl` — the iteration-level view.
 4. `.gsd/metrics.json` — does any `type/id` appear more than once? (stuck loop signal)
