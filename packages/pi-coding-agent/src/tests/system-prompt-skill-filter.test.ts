@@ -123,3 +123,35 @@ test("buildSystemPrompt: skillFilter does not affect context files or cwd render
 	assert.ok(prompt.includes("project instructions"), "context files should still render");
 	assert.ok(!prompt.includes("<available_skills>"), "no skill catalog when filter rejects all");
 });
+
+// ─── Exception safety ─────────────────────────────────────────────────────
+
+test("buildSystemPrompt: skillFilter that throws falls back to unfiltered list and does not propagate", (t) => {
+	// A buggy consumer predicate must not bubble out of buildSystemPrompt.
+	// If it did, _rebuildSystemPrompt could unwind mid-setTools() and leave
+	// the session with updated tools but a stale system prompt.
+	const skills = [makeSkill("alpha"), makeSkill("beta")];
+
+	// Suppress the console.warn the fallback emits so test output stays clean.
+	const originalWarn = console.warn;
+	const warnings: string[] = [];
+	console.warn = (...args: unknown[]) => { warnings.push(args.join(" ")); };
+	t.after(() => { console.warn = originalWarn; });
+
+	let prompt = "";
+	assert.doesNotThrow(() => {
+		prompt = buildSystemPrompt({
+			skills,
+			selectedTools: ["read", "Skill"],
+			skillFilter: () => { throw new Error("consumer bug"); },
+		});
+	});
+
+	const section = extractAvailableSkills(prompt);
+	assert.match(section, /<name>alpha<\/name>/, "alpha should render (fallback to unfiltered)");
+	assert.match(section, /<name>beta<\/name>/, "beta should render (fallback to unfiltered)");
+	assert.ok(
+		warnings.some(w => w.includes("skillFilter threw") && w.includes("consumer bug")),
+		"fallback should emit an identifying warning",
+	);
+});

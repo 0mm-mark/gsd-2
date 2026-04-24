@@ -45,6 +45,14 @@ export interface BuildSystemPromptOptions {
 	 * (e.g. per-unit-type manifests) to reduce cached system-prompt bloat.
 	 * When omitted, all non-`disableModelInvocation` skills render — i.e.
 	 * behavior is unchanged from before this option existed.
+	 *
+	 * Contract: the predicate must be **pure and synchronous**. It may be
+	 * invoked on every system-prompt rebuild (tool-set changes and
+	 * runtime resource-loader extensions both trigger one), so any state
+	 * the closure captures should be stable across the rebuild window.
+	 * If the predicate throws, `buildSystemPrompt` logs a warning and
+	 * falls back to the unfiltered skill list — callers never see the
+	 * exception and the session stays consistent.
 	 */
 	skillFilter?: (skill: Skill) => boolean;
 }
@@ -80,7 +88,19 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 
 	const contextFiles = providedContextFiles ?? [];
 	const skillsBase = providedSkills ?? [];
-	const skills = skillFilter ? skillsBase.filter(skillFilter) : skillsBase;
+	let skills = skillsBase;
+	if (skillFilter) {
+		try {
+			skills = skillsBase.filter(skillFilter);
+		} catch (error) {
+			// A consumer's predicate threw. Fall back to the unfiltered list so
+			// the session stays consistent — callers (e.g. AgentSession.setTools)
+			// must not be left with updated tools but a stale system prompt.
+			const message = error instanceof Error ? error.message : String(error);
+			console.warn(`buildSystemPrompt: skillFilter threw; falling back to unfiltered skills. Error: ${message}`);
+			skills = skillsBase;
+		}
+	}
 
 	if (customPrompt) {
 		let prompt = customPrompt;
