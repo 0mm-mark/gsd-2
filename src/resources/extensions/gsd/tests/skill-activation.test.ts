@@ -245,22 +245,23 @@ test("buildSkillActivationBlock allows valid skill names and rejects invalid one
 
 // ─── Per-unit-type skill manifest (RFC #4779) ─────────────────────────────────
 
-test("buildSkillActivationBlock filters skills by unit-type manifest", () => {
+test("buildSkillActivationBlock: explicit always_use_skills bypass the unit-type manifest", () => {
   const base = makeTempBase();
   try {
     // write-docs is in the research-milestone manifest; swiftui is not.
+    // Both are in always_use_skills — a user-explicit source — so BOTH
+    // should activate regardless of the manifest. User intent wins over
+    // unit-type defaults. See RFC #4779 and skill-manifest.ts rationale.
     writeSkill(base, "write-docs", "Use when writing docs or RFCs.");
     writeSkill(base, "swiftui", "Use for SwiftUI views.");
     loadOnlyTestSkills(base);
 
-    // always_use_skills would normally include both; manifest filter should
-    // drop swiftui for the research-milestone unit type.
     const result = buildBlock(base, { unitType: "research-milestone" }, {
       always_use_skills: ["write-docs", "swiftui"],
     });
 
     assert.match(result, /Call Skill\(\{ skill: 'write-docs' \}\)/);
-    assert.doesNotMatch(result, /swiftui/);
+    assert.match(result, /Call Skill\(\{ skill: 'swiftui' \}\)/);
   } finally {
     cleanup(base);
   }
@@ -300,9 +301,11 @@ test("buildSkillActivationBlock without unitType preserves pre-manifest behavior
   }
 });
 
-test("milestone prompt builders pass their unit type to the skill manifest", async () => {
+test("milestone prompt builders propagate always_use_skills through buildSkillActivationBlock", async () => {
   const base = makeTempBase();
   try {
+    // Both skills are in always_use_skills — explicit user intent bypasses
+    // the unit-type manifest, so both activate in both milestone flows.
     writeSkill(base, "write-docs", "Use when writing docs or RFCs.");
     writeSkill(base, "swiftui", "Use for SwiftUI views.");
     writeProjectPreferences(base, "always_use_skills:\n  - write-docs\n  - swiftui\n");
@@ -310,11 +313,11 @@ test("milestone prompt builders pass their unit type to the skill manifest", asy
 
     const researchPrompt = await buildResearchMilestonePrompt("M001", "Test", base);
     assert.match(researchPrompt, /Call Skill\(\{ skill: 'write-docs' \}\)/);
-    assert.doesNotMatch(researchPrompt, /swiftui/);
+    assert.match(researchPrompt, /Call Skill\(\{ skill: 'swiftui' \}\)/);
 
     const planPrompt = await buildPlanMilestonePrompt("M001", "Test", base);
     assert.match(planPrompt, /Call Skill\(\{ skill: 'write-docs' \}\)/);
-    assert.doesNotMatch(planPrompt, /swiftui/);
+    assert.match(planPrompt, /Call Skill\(\{ skill: 'swiftui' \}\)/);
   } finally {
     cleanup(base);
   }

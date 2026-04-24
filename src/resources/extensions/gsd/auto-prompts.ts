@@ -36,7 +36,7 @@ import { readPhaseAnchor, formatAnchorForPrompt } from "./phase-anchor.js";
 import { logWarning } from "./workflow-logger.js";
 import { inlineGraphSubgraph } from "./graph-context.js";
 import { buildExtractionStepsBlock } from "./commands-extract-learnings.js";
-import { filterSkillsByManifest, warnIfManifestHasMissingSkills } from "./skill-manifest.js";
+import { warnIfManifestHasMissingSkills } from "./skill-manifest.js";
 
 // ─── Preamble Cap ─────────────────────────────────────────────────────────────
 
@@ -723,7 +723,19 @@ export function buildSkillActivationBlock(params: {
   );
 
   const loaded = (typeof getLoadedSkills === 'function' ? getLoadedSkills() : []).filter(skill => !skill.disableModelInvocation);
-  const visibleSkills = filterSkillsByManifest(loaded, params.unitType);
+
+  // Skill activation here is driven entirely by explicit sources
+  // (always_use_skills, prefer_skills, skill_rules, task-plan skills_used).
+  // Every match is an explicit user/project intent and must not be dropped
+  // by the unit-type manifest — user intent is stronger signal than
+  // defaults. The manifest's real home is the skill catalog rendering
+  // layer (pi-coding-agent `formatSkillsForPrompt`); that wiring is tracked
+  // as the "load-time short-circuit" follow-up to RFC #4779.
+  //
+  // `unitType` stays plumbed so the strict-mode warning can surface
+  // manifest entries that reference uninstalled skills, and so the
+  // activation-block site is ready to opt in once PR B lands.
+  const visibleSkills = loaded;
   const installedNames = new Set(visibleSkills.map(skill => normalizeSkillReference(skill.name)));
   warnIfManifestHasMissingSkills(params.unitType, installedNames);
   const avoided = new Set(resolvePreferenceSkillNames(prefs?.avoid_skills ?? [], params.base));
