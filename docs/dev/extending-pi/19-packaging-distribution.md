@@ -18,6 +18,28 @@ Add a `pi` manifest to `package.json`:
 }
 ```
 
+### `pi.extensions` vs `extension-manifest.json`
+
+Two separate mechanisms serve different purposes:
+
+**`pi.extensions` in `package.json`** — tells the runtime which files to load as extensions. Required for packaged extensions (those with npm dependencies).
+
+```json
+{
+  "name": "@gsd/extension-breakout",
+  "type": "module",
+  "pi": {
+    "extensions": ["src/index.ts"]
+  }
+}
+```
+
+**`extension-manifest.json`** — declares capabilities for the registry. Does not specify the entry point.
+
+Both files are needed for a packaged extension. They serve different registries: `package.json` → runtime loader, `extension-manifest.json` → capability registry.
+
+**Convention directories (no `package.json` needed):** for single-file extensions without npm dependencies, drop `.ts` files directly in `~/.gsd/agent/extensions/` — the runtime auto-discovers them. `extension-manifest.json` is still recommended even then.
+
 ### Installing Packages
 
 ```bash

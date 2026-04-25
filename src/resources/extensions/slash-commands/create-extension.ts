@@ -229,14 +229,26 @@ function sendPrompt(description: string, result: RoundResult, pi: ExtensionAPI):
 
 	if (uiSelected.includes("custom component")) {
 		docHints.push("- `docs/extension-sdk/building-extensions.md#custom-components` — ctx.ui.custom() API");
-		docHints.push("- `docs/pi-ui-tui/06-ctx-ui-custom-full-custom-components.md` — step-by-step component guide");
-		docHints.push("- `docs/pi-ui-tui/07-built-in-components-the-building-blocks.md` — Text, Box, SelectList");
-		docHints.push("- `docs/pi-ui-tui/09-keyboard-input-how-to-handle-keys.md` — Key, matchesKey");
-		docHints.push("- `docs/pi-ui-tui/10-line-width-the-cardinal-rule.md` — truncation, width rules");
+		docHints.push("- `docs/dev/pi-ui-tui/06-ctx-ui-custom-full-custom-components.md` — step-by-step component guide");
+		docHints.push("- `docs/dev/pi-ui-tui/07-built-in-components-the-building-blocks.md` — Text, Box, SelectList");
+		docHints.push("- `docs/dev/pi-ui-tui/09-keyboard-input-how-to-handle-keys.md` — Key, matchesKey");
+		docHints.push("- `docs/dev/pi-ui-tui/10-line-width-the-cardinal-rule.md` — truncation, width rules");
 	} else if (uiSelected.includes("Dialogs")) {
 		docHints.push("- `docs/extension-sdk/building-extensions.md#built-in-dialogs` — select, confirm, input");
 	} else if (uiSelected.includes("Status")) {
 		docHints.push("- `docs/extension-sdk/building-extensions.md#persistent-ui-elements` — status, widgets");
+	}
+
+	if (uiSelected.includes("tool") || result.answers["purpose"]) {
+		docHints.push("- `docs/dev/extending-pi/14-custom-rendering-controlling-what-the-user-sees.md` — renderCall / renderResult");
+	}
+
+	if (eventsSelected && !eventsSelected.includes("standalone")) {
+		docHints.push("- `docs/dev/extending-pi/07-events-the-nervous-system.md` — all events reference");
+	}
+
+	if (eventsSelected.includes("context / prompt")) {
+		docHints.push("- `docs/dev/extending-pi/15-system-prompt-modification.md` — system prompt hooks");
 	}
 
 	if (persistenceSelected.includes("session")) {
