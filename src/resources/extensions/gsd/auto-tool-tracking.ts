@@ -114,7 +114,7 @@ export function isQueuedUserMessageSkip(errorMsg: string): boolean {
   return /^Skipped due to queued user message\.?$/i.test(errorMsg.trim());
 }
 
-// ─── Deterministic policy error classification (#4973) ─────────────────────
+// ─── Deterministic policy error classification (#4973, #4974) ──────────────
 
 /**
  * Known deterministic policy error substrings. Each entry is a stable string
@@ -137,9 +137,17 @@ export const DETERMINISTIC_POLICY_ERROR_STRINGS = [
 ] as const;
 
 /**
- * Returns true if the error message indicates a deterministic policy rejection
- * (a structural gate that will fire on every retry regardless of model quality).
- * Used by postUnitPreVerification to short-circuit the retry loop (#4973).
+ * Returns true if the error message indicates a deterministic policy gate
+ * blocked the tool call before execution. Retrying the same unit without
+ * changing behavior will hit the same gate, so auto-mode should pause instead
+ * of re-dispatching.
+ *
+ * Combines the regex-based gate set from #4974 (HARD BLOCK / queue planning /
+ * STATE.md / mechanical gate) and the substring-based set from #4973 (context
+ * write block / CONTEXT depth verification). Both branches landed on main
+ * independently and their parallel `isDeterministicPolicyError` declarations
+ * were not deduplicated at merge — this consolidated form preserves both
+ * matchers under a single export.
  */
 export function isDeterministicPolicyError(errorMsg: string): boolean {
   if (!errorMsg) return false;
