@@ -251,9 +251,6 @@ export function detectRogueFileWrites(
   return rogues;
 }
 
-/** Throttle STATE.md rebuilds — at most once per 30 seconds */
-const STATE_REBUILD_MIN_INTERVAL_MS = 30_000;
-
 /**
  * Maximum number of times to retry a unit whose expected artifact is missing
  * after execution. Matches the bounded pattern used by runPostUnitVerification
@@ -970,6 +967,12 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
           );
           return "retry";
         }
+      }
+
+      // Verification succeeded — clear the retry counter so a future failure
+      // of the same unit gets a full retry budget instead of the stale count.
+      if (triggerArtifactVerified) {
+        s.verificationRetryCount.delete(`${s.currentUnit.type}:${s.currentUnit.id}`);
       }
     } else {
       // Hook unit completed — no additional processing needed

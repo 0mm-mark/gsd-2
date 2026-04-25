@@ -128,3 +128,87 @@ test("#2007 bug 3: dead constants are not re-exported from auto.ts", () => {
     "MAX_LIFETIME_DISPATCHES must not be re-exported from auto.ts",
   );
 });
+
+// ─── No stray dead constants left behind by the fix ──────────────────────────
+
+test("#2007 fix does not introduce a new dead constant (STATE_REBUILD_MIN_INTERVAL_MS)", () => {
+  // Bug 3 was about removing dead constants. A draft of this PR added
+  // STATE_REBUILD_MIN_INTERVAL_MS without referencing it — the same anti-pattern
+  // it set out to remove. Lock that down so it cannot regress.
+  assert.ok(
+    !postUnitSrc.includes("STATE_REBUILD_MIN_INTERVAL_MS"),
+    "STATE_REBUILD_MIN_INTERVAL_MS was added but never referenced — must be removed",
+  );
+});
+
+// ─── Behavioral: retry counter is cleared on success ─────────────────────────
+
+test("#2007 verificationRetryCount is cleared on artifact verification success", () => {
+  // Find the success-clear we just added: when triggerArtifactVerified is
+  // true, the retry counter for the current unit must be deleted so a future
+  // failure of the same unit type+id gets the full retry budget instead of
+  // a stale leftover count.
+  //
+  // We assert on the structural shape because a behavioral test would need
+  // to mock 30+ imports of postUnitPreVerification. The AutoSession-level
+  // test below covers the Map contract.
+  const successClearIdx = postUnitSrc.indexOf(
+    "if (triggerArtifactVerified)",
+  );
+  assert.ok(
+    successClearIdx !== -1,
+    "Must guard the retry-count clear behind a triggerArtifactVerified check",
+  );
+  const deleteIdx = postUnitSrc.indexOf(
+    "verificationRetryCount.delete",
+    successClearIdx,
+  );
+  assert.ok(
+    deleteIdx !== -1,
+    "verificationRetryCount.delete must be called on the verification-success path",
+  );
+});
+
+// ─── AutoSession.verificationRetryCount Map behavior ─────────────────────────
+
+import { AutoSession } from "../auto/session.ts";
+
+test("AutoSession.verificationRetryCount tracks attempts per retry key", () => {
+  const s = new AutoSession();
+  const key = "execute-task:M01/S01/T01";
+
+  assert.equal(s.verificationRetryCount.get(key), undefined);
+
+  s.verificationRetryCount.set(key, 1);
+  assert.equal(s.verificationRetryCount.get(key), 1);
+
+  s.verificationRetryCount.set(key, 2);
+  assert.equal(s.verificationRetryCount.get(key), 2);
+
+  // Simulate the success-clear path
+  s.verificationRetryCount.delete(key);
+  assert.equal(s.verificationRetryCount.get(key), undefined);
+});
+
+test("AutoSession.verificationRetryCount is cleared on session reset", () => {
+  const s = new AutoSession();
+  s.verificationRetryCount.set("execute-task:M01/S01/T01", 2);
+  s.verificationRetryCount.set("plan-slice:M01/S02", 1);
+
+  s.reset();
+
+  assert.equal(s.verificationRetryCount.size, 0);
+});
+
+test("AutoSession.verificationRetryCount independence across retry keys", () => {
+  // Critical: if retries for unit A fail twice and unit A then succeeds, the
+  // counter for A should be cleared but B's counter must remain untouched.
+  const s = new AutoSession();
+  s.verificationRetryCount.set("execute-task:M01/S01/T01", 2);
+  s.verificationRetryCount.set("execute-task:M01/S01/T02", 1);
+
+  s.verificationRetryCount.delete("execute-task:M01/S01/T01");
+
+  assert.equal(s.verificationRetryCount.get("execute-task:M01/S01/T01"), undefined);
+  assert.equal(s.verificationRetryCount.get("execute-task:M01/S01/T02"), 1);
+});
