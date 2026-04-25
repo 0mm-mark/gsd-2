@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -126,7 +126,18 @@ function persistWriteGateSnapshot(basePath: string = process.cwd()): void {
   mkdirSync(join(basePath, ".gsd", "runtime"), { recursive: true });
   const tempPath = `${path}.tmp`;
   writeFileSync(tempPath, JSON.stringify(currentWriteGateSnapshot(), null, 2), "utf-8");
-  renameSync(tempPath, path);
+  try {
+    renameSync(tempPath, path);
+  } catch (err: unknown) {
+    // EXDEV: cross-device rename (temp and dest on different mounts). Fall back
+    // to copy-then-delete so the snapshot is still written atomically enough.
+    if (err instanceof Error && (err as NodeJS.ErrnoException).code === "EXDEV") {
+      copyFileSync(tempPath, path);
+      unlinkSync(tempPath);
+    } else {
+      throw err;
+    }
+  }
 }
 
 function clearPersistedWriteGateSnapshot(basePath: string = process.cwd()): void {
