@@ -306,13 +306,13 @@ jobs:
             for file in $CONFLICTED_FILES; do
               if [[ "$file" == src/experimental/* || "$file" == .mcp.json || "$file" == tsconfig.resources.json ]]; then
                 if [[ "$file" == .mcp.json ]]; then
-                  echo "→ Auto-resolving $file (patched e-tag version wins)"
-                  git checkout --theirs -- "$file"
+                  echo "→ Auto-resolving $file (patched e-tag version wins - deleting file)"
+                  git rm -f .mcp.json || true
                 else
                   echo "→ Auto-resolving $file (experimental branch wins)"
                   git checkout --ours -- "$file"
                 fi
-                git add "$file"
+                git add "$file" 2>/dev/null || true
                 AUTO_RESOLVED=$((AUTO_RESOLVED + 1))
               else
                 echo "→ Leaving conflict in $file (outside allowed files)"
