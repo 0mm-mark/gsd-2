@@ -3,7 +3,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, experimental]
     paths-ignore:
       - '.github/workflows/ai-triage.yml'
       - '.github/workflows/build-native.yml'
@@ -11,7 +11,7 @@ on:
       - '.github/workflows/pipeline.yml'
       - 'LICENSE'
   pull_request:
-    branches: [main]
+    branches: [main, experimental]
     paths-ignore:
       - '.github/workflows/ai-triage.yml'
       - '.github/workflows/build-native.yml'
