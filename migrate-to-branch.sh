@@ -23,10 +23,10 @@ git checkout -B feature/pluggable-orchestrator ea46bc0b1d53c9d067f213be9448198d5
 
 echo ""
 echo "Step 3: Applying the original patch (should be clean on this base)..."
-if [ -f "attachments/pluggable-orchestrator.patch" ]; then
-  PATCH_FILE="attachments/pluggable-orchestrator.patch"
-elif [ -f "../attachments/pluggable-orchestrator.patch" ]; then
-  PATCH_FILE="../attachments/pluggable-orchestrator.patch"
+if [ -f "patches/pluggable-orchestrator.patch" ]; then
+  PATCH_FILE="patches/pluggable-orchestrator.patch"
+elif [ -f "../patches/pluggable-orchestrator.patch" ]; then
+  PATCH_FILE="../patches/pluggable-orchestrator.patch"
 else
   echo "ERROR: Cannot find pluggable-orchestrator.patch"
   echo "Please place it in the repo root or run from the correct directory."
