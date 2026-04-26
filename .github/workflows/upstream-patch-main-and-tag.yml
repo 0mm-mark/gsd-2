@@ -295,6 +295,7 @@ jobs:
             echo "=== Merge produced conflicts. Auto-resolving allowed files ==="
 
             CONFLICTED_FILES=$(git ls-files -u | awk '{print $4}' | sort -u || true)
+
             if [ -z "$CONFLICTED_FILES" ]; then
               echo "No conflicted files. Aborting."
               exit 1
@@ -304,14 +305,26 @@ jobs:
             HAD_DISALLOWED_CONFLICT=0
 
             for file in $CONFLICTED_FILES; do
-              if [[ "$file" == src/experimental/* || "$file" == .mcp.json || "$file" == tsconfig.resources.json ]]; then
+              if [[ "$file" == src/experimental/* || \
+                    "$file" == .mcp.json || \
+                    "$file" == tsconfig.resources.json || \
+                    "$file" == src/resources/extensions/gsd/auto.ts || \
+                    "$file" == src/resources/extensions/gsd/preferences-types.ts || \
+                    "$file" == src/resources/extensions/gsd/tests/auto-loop.test.ts ]]; then
+
                 if [[ "$file" == .mcp.json ]]; then
                   echo "→ Auto-resolving $file (patched e-tag version wins - deleting file)"
                   git rm -f .mcp.json || true
+                elif [[ "$file" == src/resources/extensions/gsd/auto.ts || \
+                        "$file" == src/resources/extensions/gsd/preferences-types.ts || \
+                        "$file" == src/resources/extensions/gsd/tests/auto-loop.test.ts ]]; then
+                  echo "→ Auto-resolving $file (patched e-tag version wins --theirs)"
+                  git checkout --theirs -- "$file"
                 else
                   echo "→ Auto-resolving $file (experimental branch wins)"
                   git checkout --ours -- "$file"
                 fi
+
                 git add "$file" 2>/dev/null || true
                 AUTO_RESOLVED=$((AUTO_RESOLVED + 1))
               else
@@ -328,6 +341,3 @@ jobs:
             echo "=== Successfully auto-resolved $AUTO_RESOLVED conflict(s) ==="
             git commit -m "chore: merge upstream patched tag $LATEST_E_TAG into experimental (auto-resolved)" || exit 1
           fi
-
-          git push origin experimental
-          echo "=== Successfully updated experimental branch with $LATEST_E_TAG ==="
