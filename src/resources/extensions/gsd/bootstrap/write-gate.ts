@@ -547,6 +547,19 @@ const PLANNING_WRITE_TOOLS = new Set(["write", "edit", "multi_edit", "notebook_e
 const PLANNING_SUBAGENT_TOOLS = new Set(["subagent", "task"]);
 
 /**
+ * Read-only specialist agents that may be dispatched from
+ * `planning-dispatch` units. Implementation-tier agents (worker, refactorer,
+ * etc.) are excluded; those belong in execute-task.
+ */
+export const ALLOWED_PLANNING_DISPATCH_AGENTS = new Set<string>([
+  "scout",
+  "planner",
+  "reviewer",
+  "security",
+  "tester",
+]);
+
+/**
  * Read-only / planning-safe tools that any non-"all" mode allows. Mirrors
  * QUEUE_SAFE_TOOLS / GATE_SAFE_TOOLS but is the inclusive default for
  * planning units (which need their full discussion + research surface).
@@ -592,6 +605,10 @@ function blockReason(unitType: string, mode: string, what: string): string {
  *   - "read-only"  → blocks all writes, bash, and subagent dispatch.
  *   - "planning"   → blocks writes to paths outside <basePath>/.gsd/,
  *                    bash that isn't read-only, and subagent dispatch.
+ *   - "planning-dispatch"
+ *                  → like "planning", but permits subagent dispatch only
+ *                    when every forwarded agent class is globally allowed
+ *                    and listed in the policy's allowedSubagents.
  *   - "docs"       → like "planning" but also allows writes to paths
  *                    matching `allowedPathGlobs` relative to basePath.
  *
@@ -601,6 +618,10 @@ function blockReason(unitType: string, mode: string, what: string): string {
  * `policy` of null means "no manifest resolved" — pass-through. Callers
  * that have no active unit (interactive sessions) pass null and this
  * predicate is a no-op.
+ *
+ * `agentClasses` is supplied by the tool hook for subagent-shaped calls. If
+ * absent or empty, planning-dispatch passes through as a migration shim while
+ * callers are updated to forward agent names.
  */
 export function shouldBlockPlanningUnit(
   toolName: string,
@@ -608,7 +629,7 @@ export function shouldBlockPlanningUnit(
   basePath: string,
   unitType: string,
   policy: ToolsPolicy | null | undefined,
-  subagentIdentities?: readonly string[],
+  agentClasses?: readonly string[],
 ): { block: boolean; reason?: string } {
   if (!policy) return { block: false };
   if (policy.mode === "all") return { block: false };
@@ -632,27 +653,31 @@ export function shouldBlockPlanningUnit(
 
   if (PLANNING_SUBAGENT_TOOLS.has(tool)) {
     if (policy.mode === "planning-dispatch") {
-      const requested = (subagentIdentities ?? []).map(a => a.trim()).filter(Boolean);
+      const requested = (agentClasses ?? []).map(a => a.trim()).filter(Boolean);
       const allowedSubagents = Array.isArray(policy.allowedSubagents) ? policy.allowedSubagents : [];
       const allowed = new Set(allowedSubagents);
       if (requested.length === 0) {
+        return { block: false };
+      }
+      const globallyDisallowed = requested.find(a => !ALLOWED_PLANNING_DISPATCH_AGENTS.has(a));
+      if (globallyDisallowed) {
         return {
           block: true,
           reason: blockReason(
             unitType,
             policy.mode,
-            `subagent dispatch is missing an agent identity; permitted planning agents: ${allowedSubagents.join(", ")}`,
+            `subagent dispatch of "${globallyDisallowed}" not permitted; only read-only specialists (${[...ALLOWED_PLANNING_DISPATCH_AGENTS].join(", ")}) may be dispatched from planning-dispatch units`,
           ),
         };
       }
-      const disallowed = requested.filter(a => !allowed.has(a));
-      if (disallowed.length > 0) {
+      const disallowedByPolicy = requested.find(a => !allowed.has(a));
+      if (disallowedByPolicy) {
         return {
           block: true,
           reason: blockReason(
             unitType,
             policy.mode,
-            `subagent dispatch of ${disallowed.map(a => `"${a}"`).join(", ")} not permitted in planning units; permitted agents: ${allowedSubagents.join(", ")}`,
+            `subagent dispatch of "${disallowedByPolicy}" not permitted by ToolsPolicy.allowedSubagents; permitted agents for this unit: ${allowedSubagents.join(", ")}`,
           ),
         };
       }

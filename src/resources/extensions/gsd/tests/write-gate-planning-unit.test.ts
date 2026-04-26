@@ -9,7 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join, sep } from 'node:path';
 
-import { shouldBlockPlanningUnit } from '../bootstrap/write-gate.ts';
+import { ALLOWED_PLANNING_DISPATCH_AGENTS, shouldBlockPlanningUnit } from '../bootstrap/write-gate.ts';
 import { isDeterministicPolicyError } from '../auto-tool-tracking.ts';
 import type { ToolsPolicy } from '../unit-context-manifest.ts';
 
@@ -17,7 +17,7 @@ const BASE = join('/tmp', 'fake-project');
 const PLANNING: ToolsPolicy = { mode: 'planning' };
 const PLANNING_DISPATCH: ToolsPolicy = {
   mode: 'planning-dispatch',
-  allowedSubagents: ['scout', 'planner', 'researcher'],
+  allowedSubagents: [...ALLOWED_PLANNING_DISPATCH_AGENTS],
 };
 const PLANNING_DISPATCH_REVIEW: ToolsPolicy = {
   mode: 'planning-dispatch',
@@ -161,17 +161,46 @@ test('planning-dispatch: allows task dispatch (delegated recon/planner during sl
   assert.strictEqual(r.block, false);
 });
 
-test('planning-dispatch: blocks subagent dispatch without a validated agent identity', () => {
+test('planning-dispatch: pass-through when no agent classes supplied (migration shim)', () => {
   const r = shouldBlockPlanningUnit('subagent', '', BASE, 'plan-slice', PLANNING_DISPATCH);
-  assert.strictEqual(r.block, true);
-  assert.match(r.reason!, /missing an agent identity/);
+  assert.strictEqual(r.block, false);
+
+  const empty = shouldBlockPlanningUnit('subagent', '', BASE, 'plan-slice', PLANNING_DISPATCH, []);
+  assert.strictEqual(empty.block, false);
+});
+
+test('planning-dispatch: allows all globally allowed specialists when listed by policy', () => {
+  const policy: ToolsPolicy = {
+    mode: 'planning-dispatch',
+    allowedSubagents: [...ALLOWED_PLANNING_DISPATCH_AGENTS],
+  };
+  const r = shouldBlockPlanningUnit(
+    'subagent',
+    '',
+    BASE,
+    'complete-milestone',
+    policy,
+    [...ALLOWED_PLANNING_DISPATCH_AGENTS],
+  );
+  assert.strictEqual(r.block, false);
 });
 
 test('planning-dispatch: blocks implementation-tier agent', () => {
   const r = shouldBlockPlanningUnit('subagent', '', BASE, 'plan-slice', PLANNING_DISPATCH, ['worker']);
   assert.strictEqual(r.block, true);
   assert.match(r.reason!, /"worker"/);
-  assert.match(r.reason!, /not permitted/);
+  assert.match(r.reason!, /read-only specialists/);
+});
+
+test('planning-dispatch: blocks globally disallowed agent even if listed by policy', () => {
+  const policy: ToolsPolicy = {
+    mode: 'planning-dispatch',
+    allowedSubagents: ['refactorer'],
+  };
+  const r = shouldBlockPlanningUnit('subagent', '', BASE, 'refine-slice', policy, ['refactorer']);
+  assert.strictEqual(r.block, true);
+  assert.match(r.reason!, /"refactorer"/);
+  assert.match(r.reason!, /read-only specialists/);
 });
 
 test('planning-dispatch: blocks mixed batch containing a disallowed agent', () => {

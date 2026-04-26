@@ -27,24 +27,24 @@ import { initNotificationWidget } from "../notification-widget.js";
 // printed it before the TUI launched. Only re-print on /clear (subsequent sessions).
 let isFirstSession = true;
 
-function extractSubagentIdentities(input: unknown): string[] | undefined {
+function extractSubagentAgentClasses(input: unknown): string[] | undefined {
   if (!input || typeof input !== "object") return undefined;
   const record = input as Record<string, unknown>;
-  const identities: string[] = [];
-  const addIdentity = (value: unknown): void => {
-    if (typeof value === "string" && value.trim().length > 0) identities.push(value.trim());
+  const agentClasses: string[] = [];
+  const addAgentClass = (value: unknown): void => {
+    if (typeof value === "string" && value.trim().length > 0) agentClasses.push(value.trim());
   };
   const addFromItems = (value: unknown): void => {
     if (!Array.isArray(value)) return;
     for (const item of value) {
-      if (item && typeof item === "object") addIdentity((item as Record<string, unknown>).agent);
+      if (item && typeof item === "object") addAgentClass((item as Record<string, unknown>).agent);
     }
   };
 
-  addIdentity(record.agent);
+  addAgentClass(record.agent);
   addFromItems(record.tasks);
   addFromItems(record.chain);
-  return identities.length > 0 ? identities : undefined;
+  return agentClasses.length > 0 ? agentClasses : undefined;
 }
 
 async function deriveGsdState(basePath: string) {
@@ -410,7 +410,7 @@ export function registerHooks(
       const manifest = resolveManifest(activeUnitType);
       if (manifest) {
         let planningInput = "";
-        let subagentIdentities: string[] | undefined;
+        let agentClasses: string[] | undefined;
         if (isToolCallEventType("write", event)) {
           planningInput = event.input.path;
         } else if (isToolCallEventType("edit", event)) {
@@ -418,7 +418,8 @@ export function registerHooks(
         } else if (isToolCallEventType("bash", event)) {
           planningInput = event.input.command;
         } else if (event.toolName === "subagent" || event.toolName === "task") {
-          subagentIdentities = extractSubagentIdentities((event as { input?: unknown }).input);
+          // Subagent inputs use { agent }, { tasks: [{ agent }] }, or { chain: [{ agent }] }.
+          agentClasses = extractSubagentAgentClasses((event as { input?: unknown }).input);
         }
         const planningGuard = shouldBlockPlanningUnit(
           event.toolName,
@@ -426,7 +427,7 @@ export function registerHooks(
           dash.basePath || discussionBasePath,
           activeUnitType,
           manifest.tools,
-          subagentIdentities,
+          agentClasses,
         );
         if (planningGuard.block) return planningGuard;
       }

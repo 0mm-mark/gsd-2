@@ -111,6 +111,12 @@ export type PreferencesPolicy = "none" | "active-only" | "full";
  *                    Task subagent dispatch denied. Catches the bug class
  *                    where a discuss-milestone turn modifies user source
  *                    files (forensics: ~/Github/test-apps/b23, #4934).
+ *   - "planning-dispatch"
+ *                  — Same read + .gsd/** write + safe-Bash surface as
+ *                    "planning", but permits controlled subagent dispatch
+ *                    only to the agents listed in the ToolsPolicy
+ *                    `allowedSubagents` field. See write-gate.ts for the
+ *                    runtime agent-class enforcement details.
  *   - "docs"       — Read tools always; writes restricted to .gsd/** AND
  *                    the explicit `allowedPathGlobs` set; Bash safe-allowlist;
  *                    no subagents. Reserved for rewrite-docs, which legitimately
@@ -273,7 +279,7 @@ const TOOLS_PLANNING: ToolsPolicy = { mode: "planning" };
 // specialists. Runtime-enforced by write-gate.ts before the subagent tool runs.
 const TOOLS_PLANNING_DISPATCH_RECON: ToolsPolicy = {
   mode: "planning-dispatch",
-  allowedSubagents: ["scout", "planner", "researcher"],
+  allowedSubagents: ["scout", "planner"],
 };
 // Like TOOLS_PLANNING_DISPATCH_RECON, but for closeout units that fan out
 // verification work to review-tier specialists.
