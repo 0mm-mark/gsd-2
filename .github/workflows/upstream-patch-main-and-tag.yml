@@ -1,0 +1,333 @@
+name: Upstream Patch Main and Tag
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+on:
+  workflow_run:
+    workflows: ["Upstream Synchronize"]
+    types: [completed]
+
+  push:
+    branches: [sync]
+    tags: ['**']
+
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-pluggable-patches
+  cancel-in-progress: false
+
+jobs:
+  # ============================================================
+  # apply-patches — Merge feature/pluggable-orchestrator into main
+  # ============================================================
+  apply-patches:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sync branch (for config)
+        uses: actions/checkout@v4
+        with:
+          ref: sync
+          token: ${{ secrets.SYNC_TOKEN }}
+          fetch-depth: 0
+
+      - name: Merge feature/pluggable-orchestrator into main (branch-based, conflict-safe)
+        run: |
+          set -x
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Get clean main
+          git fetch origin main
+          git checkout main
+          git reset --hard origin/main
+
+          # Fetch the single source of truth for pluggable features
+          git fetch origin feature/pluggable-orchestrator --force
+
+          echo "=== Merging feature/pluggable-orchestrator into main ==="
+
+          if git merge --no-ff --no-edit origin/feature/pluggable-orchestrator; then
+            echo "=== Clean merge completed (no conflicts) ==="
+          else
+            echo "=== Merge produced conflicts. Auto-resolving allowed files ==="
+
+            CONFLICTED_FILES=$(git ls-files -u | awk '{print $4}' | sort -u || true)
+
+            if [ -z "$CONFLICTED_FILES" ]; then
+              echo "No conflicted files detected. Aborting."
+              exit 1
+            fi
+
+            AUTO_RESOLVED=0
+            HAD_DISALLOWED_CONFLICT=0
+
+            for file in $CONFLICTED_FILES; do
+              # Prefer the pluggable feature version for experimental + the core files it touches
+              if [[ "$file" == src/experimental/* || \
+                    "$file" == src/resources/extensions/gsd/auto.ts || \
+                    "$file" == src/resources/extensions/gsd/preferences-types.ts || \
+                    "$file" == src/resources/extensions/gsd/tests/auto-loop.test.ts || \
+                    "$file" == .mcp.json ]]; then
+                echo "→ Auto-resolving $file (feature branch wins --theirs)"
+                git checkout --theirs -- "$file"
+                git add "$file"
+                AUTO_RESOLVED=$((AUTO_RESOLVED + 1))
+              else
+                echo "→ Leaving conflict in $file (requires manual review)"
+                HAD_DISALLOWED_CONFLICT=1
+              fi
+            done
+
+            if [ "$HAD_DISALLOWED_CONFLICT" -eq 1 ]; then
+              echo "::error::Unresolved merge conflicts remain outside allowed files. Manual resolution required."
+              exit 1
+            fi
+
+            echo "=== Successfully auto-resolved $AUTO_RESOLVED conflict(s) ==="
+            git commit -m "chore: merge feature/pluggable-orchestrator into main (auto-resolved)" || {
+              echo "::error::Failed to commit auto-resolved merge."
+              exit 1
+            }
+          fi
+
+          # Safe push
+          git push --force-with-lease origin main
+          echo "=== Successfully updated main with feature/pluggable-orchestrator ==="
+
+  # ============================================================
+  # apply-patches-to-latest-tag — Update pluggable-latest branch
+  # ============================================================
+  apply-patches-to-latest-tag:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sync branch (for config)
+        uses: actions/checkout@v4
+        with:
+          ref: sync
+          token: ${{ secrets.SYNC_TOKEN }}
+          fetch-depth: 0
+
+      - name: Merge feature/pluggable-orchestrator into latest tag → pluggable-latest
+        run: |
+          set -x
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin --tags --force --prune
+
+          LATEST_TAG=$(git tag --sort=-v:refname | head -n 1)
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No tags found. Skipping."
+            exit 0
+          fi
+          echo "=== Most recent tag: $LATEST_TAG ==="
+
+          TARGET_BRANCH="pluggable-latest"
+
+          git checkout -B "$TARGET_BRANCH" "$LATEST_TAG"
+          git fetch origin feature/pluggable-orchestrator --force
+
+          echo "=== Merging feature/pluggable-orchestrator into $TARGET_BRANCH ==="
+
+          if git merge --no-ff --no-edit origin/feature/pluggable-orchestrator; then
+            echo "=== Clean merge completed ==="
+          else
+            # Same conflict resolution block as above (DRY in spirit)
+            CONFLICTED_FILES=$(git ls-files -u | awk '{print $4}' | sort -u || true)
+            HAD_DISALLOWED=0
+            AUTO_RESOLVED=0
+
+            for file in $CONFLICTED_FILES; do
+              if [[ "$file" == src/experimental/* || \
+                    "$file" == src/resources/extensions/gsd/auto.ts || \
+                    "$file" == src/resources/extensions/gsd/preferences-types.ts || \
+                    "$file" == src/resources/extensions/gsd/tests/auto-loop.test.ts || \
+                    "$file" == .mcp.json ]]; then
+                git checkout --theirs -- "$file"
+                git add "$file"
+                AUTO_RESOLVED=$((AUTO_RESOLVED + 1))
+              else
+                HAD_DISALLOWED=1
+              fi
+            done
+
+            if [ "$HAD_DISALLOWED" -eq 1 ]; then
+              echo "::error::Unresolved conflicts outside allowed files."
+              exit 1
+            fi
+
+            git commit -m "chore: merge feature/pluggable-orchestrator into $TARGET_BRANCH (auto-resolved)" || exit 1
+          fi
+
+          git push --force-with-lease origin "$TARGET_BRANCH"
+          echo "=== Successfully updated $TARGET_BRANCH with feature/pluggable-orchestrator ==="
+
+  # ============================================================
+  # create-patched-e-tag — Create vX.Y.Ze tag from latest upstream + feature branch
+  # ============================================================
+  create-patched-e-tag:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sync branch (for config)
+        uses: actions/checkout@v4
+        with:
+          ref: sync
+          token: ${{ secrets.SYNC_TOKEN }}
+          fetch-depth: 0
+
+      - name: Create patched e-tag from latest upstream tag + feature/pluggable-orchestrator
+        run: |
+          set -x
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin --tags --force --prune
+
+          LATEST_TAG=$(git tag --sort=-v:refname | grep -v 'e$' | head -n 1)
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No upstream tags found. Skipping."
+            exit 0
+          fi
+          echo "=== Most recent upstream tag: $LATEST_TAG ==="
+
+          PATCHED_TAG="${LATEST_TAG}e"
+          echo "=== Target patched tag: $PATCHED_TAG ==="
+
+          # Idempotency check
+          if git ls-remote --tags origin | grep -q "refs/tags/${PATCHED_TAG}$"; then
+            echo "=== Patched tag $PATCHED_TAG already exists remotely. Skipping. ==="
+            exit 0
+          fi
+
+          # Work on detached HEAD at the upstream tag
+          git checkout --detach "$LATEST_TAG"
+          git fetch origin feature/pluggable-orchestrator --force
+
+          echo "=== Merging feature/pluggable-orchestrator into $LATEST_TAG (detached) ==="
+
+          if git merge --no-ff --no-edit origin/feature/pluggable-orchestrator; then
+            echo "=== Clean merge completed ==="
+          else
+            CONFLICTED_FILES=$(git ls-files -u | awk '{print $4}' | sort -u || true)
+            HAD_DISALLOWED=0
+
+            for file in $CONFLICTED_FILES; do
+              if [[ "$file" == src/experimental/* || \
+                    "$file" == src/resources/extensions/gsd/auto.ts || \
+                    "$file" == src/resources/extensions/gsd/preferences-types.ts || \
+                    "$file" == src/resources/extensions/gsd/tests/auto-loop.test.ts || \
+                    "$file" == .mcp.json ]]; then
+                git checkout --theirs -- "$file"
+                git add "$file"
+              else
+                HAD_DISALLOWED=1
+              fi
+            done
+
+            if [ "$HAD_DISALLOWED" -eq 1 ]; then
+              echo "::error::Unresolved conflicts. Aborting tag creation."
+              exit 1
+            fi
+
+            git commit -m "chore: merge feature/pluggable-orchestrator for $PATCHED_TAG (auto-resolved)" || exit 1
+          fi
+
+          # Create annotated tag
+          git tag -a "$PATCHED_TAG" \
+            -m "Upstream $LATEST_TAG + pluggable orchestrator (feature/pluggable-orchestrator branch)" \
+            || { echo "::error::Failed to create tag"; exit 1; }
+
+          git push origin "$PATCHED_TAG"
+          echo "=== Successfully created patched tag $PATCHED_TAG ==="
+
+  # ============================================================
+  # sync-experimental-branch — unchanged (still merges latest e-tag)
+  # ============================================================
+  sync-experimental-branch:
+    needs: create-patched-e-tag
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sync branch (for config)
+        uses: actions/checkout@v4
+        with:
+          ref: sync
+          token: ${{ secrets.SYNC_TOKEN }}
+          fetch-depth: 0
+
+      - name: Merge latest patched e-tag into experimental branch (auto-resolve src/experimental/ + .mcp.json)
+        run: |
+          set -x
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin --tags --force --prune
+
+          LATEST_E_TAG=$(git tag --sort=-v:refname | grep -E 'e$' | head -n 1)
+          if [ -z "$LATEST_E_TAG" ]; then
+            echo "No patched e-tag found yet. Skipping."
+            exit 0
+          fi
+          echo "=== Latest patched tag: $LATEST_E_TAG ==="
+
+          git checkout -B experimental origin/experimental 2>/dev/null || git checkout -B experimental "$LATEST_E_TAG"
+
+          if git merge-base --is-ancestor "$LATEST_E_TAG" HEAD; then
+            echo "=== experimental branch is already up-to-date with $LATEST_E_TAG. Skipping. ==="
+            exit 0
+          fi
+
+          echo "=== Merging $LATEST_E_TAG into experimental ==="
+
+          if git merge --no-ff --no-edit "$LATEST_E_TAG"; then
+            echo "=== Clean merge completed ==="
+          else
+            echo "=== Merge produced conflicts. Auto-resolving allowed files ==="
+
+            CONFLICTED_FILES=$(git ls-files -u | awk '{print $4}' | sort -u || true)
+            if [ -z "$CONFLICTED_FILES" ]; then
+              echo "No conflicted files. Aborting."
+              exit 1
+            fi
+
+            AUTO_RESOLVED=0
+            HAD_DISALLOWED_CONFLICT=0
+
+            for file in $CONFLICTED_FILES; do
+              if [[ "$file" == src/experimental/* || "$file" == .mcp.json || "$file" == tsconfig.resources.json ]]; then
+                if [[ "$file" == .mcp.json ]]; then
+                  echo "→ Auto-resolving $file (patched e-tag version wins)"
+                  git checkout --theirs -- "$file"
+                else
+                  echo "→ Auto-resolving $file (experimental branch wins)"
+                  git checkout --ours -- "$file"
+                fi
+                git add "$file"
+                AUTO_RESOLVED=$((AUTO_RESOLVED + 1))
+              else
+                echo "→ Leaving conflict in $file (outside allowed files)"
+                HAD_DISALLOWED_CONFLICT=1
+              fi
+            done
+
+            if [ "$HAD_DISALLOWED_CONFLICT" -eq 1 ]; then
+              echo "::error::Unresolved merge conflicts remain outside allowed files."
+              exit 1
+            fi
+
+            echo "=== Successfully auto-resolved $AUTO_RESOLVED conflict(s) ==="
+            git commit -m "chore: merge upstream patched tag $LATEST_E_TAG into experimental (auto-resolved)" || exit 1
+          fi
+
+          git push origin experimental
+          echo "=== Successfully updated experimental branch with $LATEST_E_TAG ==="
