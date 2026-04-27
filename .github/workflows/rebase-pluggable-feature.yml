@@ -31,13 +31,36 @@ jobs:
           token: ${{ secrets.SYNC_TOKEN }}
           fetch-depth: 0
 
-      - name: Rebase onto latest main
+      - name: Rebase onto latest main (with auto conflict resolution)
         run: |
           set -x
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git fetch origin main --force
-          git rebase origin/main
+
+          if git rebase origin/main; then
+            echo "=== Rebase completed cleanly ==="
+          else
+            echo "=== Rebase hit conflicts. Auto-resolving known files ==="
+
+            # Auto-resolve the files we expect to conflict
+            for file in src/resources/extensions/gsd/auto.ts src/resources/extensions/gsd/tests/auto-loop.test.ts; do
+              if git ls-files -u | grep -q "$file"; then
+                echo "→ Auto-resolving $file (taking feature branch version)"
+                git checkout --theirs -- "$file"
+                git add "$file"
+              fi
+            done
+
+            # Continue the rebase
+            if git rebase --continue; then
+              echo "=== Rebase completed after auto-resolution ==="
+            else
+              echo "::error::Rebase still failed after auto-resolution. Manual intervention required."
+              exit 1
+            fi
+          fi
+
           git push --force-with-lease origin feature/pluggable-orchestrator
           echo "=== Successfully rebased and pushed feature/pluggable-orchestrator ==="
