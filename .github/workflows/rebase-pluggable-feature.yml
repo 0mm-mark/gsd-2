@@ -1,0 +1,43 @@
+name: Rebase Pluggable Feature Branch
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+on:
+  workflow_run:
+    workflows: ["Upstream Synchronize"]
+    types: [completed]
+
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rebase-pluggable-feature
+  cancel-in-progress: true
+
+jobs:
+  rebase-feature:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch with full history
+        uses: actions/checkout@v4
+        with:
+          ref: feature/pluggable-orchestrator
+          token: ${{ secrets.SYNC_TOKEN }}
+          fetch-depth: 0
+
+      - name: Rebase onto latest main
+        run: |
+          set -x
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin main --force
+          git rebase origin/main
+          git push --force-with-lease origin feature/pluggable-orchestrator
+          echo "=== Successfully rebased and pushed feature/pluggable-orchestrator ==="
