@@ -93,10 +93,10 @@ export type PreferencesPolicy = "none" | "active-only" | "full";
 /**
  * Tool-access policy per unit type (#4934).
  *
- * Declarative-only in this PR — runtime enforcement (write-gate.ts predicate
- * + dispatch-time isolation) lands in follow-up PRs. The shape is the
- * agreement between manifest authors and enforcement; surfacing it now lets
- * reviewers ratify per-unit policy intent before any blocking logic ships.
+ * Runtime-enforced by the GSD write gate for active auto-mode units. The
+ * manifest declares the allowed tool surface; register-hooks.ts resolves the
+ * active unit's manifest before each tool call and write-gate.ts rejects
+ * violations before the tool executes.
  *
  * Modes:
  *   - "all"        — Read + Edit/Write/MultiEdit/NotebookEdit + Bash + Task.
@@ -111,6 +111,12 @@ export type PreferencesPolicy = "none" | "active-only" | "full";
  *                    Task subagent dispatch denied. Catches the bug class
  *                    where a discuss-milestone turn modifies user source
  *                    files (forensics: ~/Github/test-apps/b23, #4934).
+ *   - "planning-dispatch"
+ *                  — Same read + .gsd/** write + safe-Bash surface as
+ *                    "planning", but permits controlled subagent dispatch
+ *                    only to the agents listed in the ToolsPolicy
+ *                    `allowedSubagents` field. See write-gate.ts for the
+ *                    runtime agent-class enforcement details.
  *   - "docs"       — Read tools always; writes restricted to .gsd/** AND
  *                    the explicit `allowedPathGlobs` set; Bash safe-allowlist;
  *                    no subagents. Reserved for rewrite-docs, which legitimately
@@ -125,6 +131,7 @@ export type ToolsPolicy =
   | { readonly mode: "all" }
   | { readonly mode: "read-only" }
   | { readonly mode: "planning" }
+  | { readonly mode: "planning-dispatch"; readonly allowedSubagents: readonly string[] }
   | { readonly mode: "docs"; readonly allowedPathGlobs: readonly string[] };
 
 // ─── Computed-artifact registry (#4924 v2 contract) ───────────────────────
@@ -214,10 +221,10 @@ export interface UnitContextManifest {
   /** Preferences block policy. */
   readonly preferences: PreferencesPolicy;
   /**
-   * Tool-access policy (#4934). Declarative in this PR; runtime enforcement
-   * (path-scoped write blocking + subagent denial + bash allowlist) lands
-   * in follow-ups. Required on every manifest so missing entries fail loud
-   * via the CI invariant test rather than defaulting to "all" silently.
+   * Tool-access policy (#4934). Runtime enforcement covers path-scoped write
+   * blocking, subagent denial, and bash allowlisting for active auto-mode
+   * units. Required on every manifest so missing entries fail loud via the CI
+   * invariant test rather than defaulting to "all" silently.
    */
   readonly tools: ToolsPolicy;
   /** Artifact handling: inline (full body), excerpt (compact), or on-demand (path only). */
@@ -268,6 +275,18 @@ const COMMON_BUDGET_SMALL = 250_000;    // ~65K tokens
 
 const TOOLS_ALL: ToolsPolicy = { mode: "all" };
 const TOOLS_PLANNING: ToolsPolicy = { mode: "planning" };
+// Like TOOLS_PLANNING but permits dispatch to read-only recon/planning
+// specialists. Runtime-enforced by write-gate.ts before the subagent tool runs.
+const TOOLS_PLANNING_DISPATCH_RECON: ToolsPolicy = {
+  mode: "planning-dispatch",
+  allowedSubagents: ["scout", "planner"],
+};
+// Like TOOLS_PLANNING_DISPATCH_RECON, but for closeout units that fan out
+// verification work to review-tier specialists.
+const TOOLS_PLANNING_DISPATCH_REVIEW: ToolsPolicy = {
+  mode: "planning-dispatch",
+  allowedSubagents: ["reviewer", "security", "tester"],
+};
 const TOOLS_DOCS: ToolsPolicy = {
   mode: "docs",
   // Globs are resolved relative to project basePath. The set is intentionally
@@ -376,7 +395,11 @@ export const UNIT_MANIFESTS: Record<UnitType, UnitContextManifest> = {
     memory: "prompt-relevant",
     codebaseMap: false,
     preferences: "active-only",
-    tools: TOOLS_PLANNING,
+    // planning-dispatch: completion is a high-leverage place to fan out to
+    // reviewer / security / tester subagents. They read the diff and report
+    // findings; they do not write user source. Write isolation to .gsd/ is
+    // preserved.
+    tools: TOOLS_PLANNING_DISPATCH_REVIEW,
     artifacts: {
       // #4780 landed slice-summary as excerpt for this unit; phase 2 of
       // the architecture will read this manifest as the source of truth
@@ -409,7 +432,10 @@ export const UNIT_MANIFESTS: Record<UnitType, UnitContextManifest> = {
     memory: "prompt-relevant",
     codebaseMap: true,
     preferences: "active-only",
-    tools: TOOLS_PLANNING,
+    // planning-dispatch: allows subagent dispatch so the planner can fan out
+    // to scout for codebase recon and to planner/decompose-style specialists
+    // for sub-decomposition. Write-isolation to .gsd/ is preserved.
+    tools: TOOLS_PLANNING_DISPATCH_RECON,
     artifacts: {
       inline: ["roadmap", "slice-research", "dependency-summaries", "requirements", "decisions", "templates"],
       excerpt: [],
@@ -423,7 +449,10 @@ export const UNIT_MANIFESTS: Record<UnitType, UnitContextManifest> = {
     memory: "prompt-relevant",
     codebaseMap: true,
     preferences: "active-only",
-    tools: TOOLS_PLANNING,
+    // See plan-slice — same rationale: dispatch to scout/planner-style
+    // specialists during refinement is materially better than re-doing recon
+    // inline.
+    tools: TOOLS_PLANNING_DISPATCH_RECON,
     artifacts: {
       inline: ["slice-plan", "slice-research", "dependency-summaries", "templates"],
       excerpt: [],
@@ -451,7 +480,10 @@ export const UNIT_MANIFESTS: Record<UnitType, UnitContextManifest> = {
     memory: "prompt-relevant",
     codebaseMap: false,
     preferences: "active-only",
-    tools: TOOLS_PLANNING,
+    // See complete-milestone — same rationale: dispatch to reviewer / security /
+    // tester subagents to fan out review work without bloating this unit's
+    // context.
+    tools: TOOLS_PLANNING_DISPATCH_REVIEW,
     artifacts: {
       // Phase 3 migration (#4782): matches today's actual
       // buildCompleteSlicePrompt inlining order. Overrides prepend +

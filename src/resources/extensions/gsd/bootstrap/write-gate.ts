@@ -3,15 +3,8 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { minimatch } from "minimatch";
 
-/**
- * Declarative tools-policy for a unit. Inlined here because the worktree
- * branch predates the full unit-context-manifest export (#4934).
- */
-export type ToolsPolicy =
-  | { mode: "all" }
-  | { mode: "read-only" }
-  | { mode: "planning" }
-  | { mode: "docs"; allowedPathGlobs: readonly string[] };
+import type { ToolsPolicy } from "../unit-context-manifest.js";
+import { logWarning } from "../workflow-logger.js";
 
 /**
  * Regex matching milestone CONTEXT.md file names in both legacy M001
@@ -535,10 +528,76 @@ export function shouldBlockQueueExecutionInSnapshot(
 }
 
 // ─── Planning-unit tools-policy enforcement (#4934) ───────────────────────
+//
+// Runtime half of the declarative ToolsPolicy on UnitContextManifest. The
+// manifest assigns each unit type a tools mode; this predicate is what
+// actually rejects a tool call that violates it.
+//
+// Forensics: a discuss-milestone LLM turn used the host Edit tool to modify
+// index.html in test app b23 (~/Github/test-apps/b23). With this predicate
+// wired into the tool_call hook, the same call returns block=true with a
+// HARD BLOCK reason that the model cannot rationalize past.
+//
+// Activation: the hook supplies the policy resolved from the active unit's
+// manifest. When no unit is active (interactive sessions, unknown unit
+// types), the hook passes null and this predicate is a no-op — falling
+// through to the existing pendingGate / queue-execution / context-write
+// guards.
 
 const PLANNING_WRITE_TOOLS = new Set(["write", "edit", "multi_edit", "notebook_edit"]);
 const PLANNING_SUBAGENT_TOOLS = new Set(["subagent", "task"]);
 
+/**
+ * Canonical registry for agents that planning-dispatch may consider. Unit
+ * manifests still declare per-unit subsets via ToolsPolicy.allowedSubagents.
+ */
+const PLANNING_DISPATCH_AGENT_REGISTRY = {
+  scout: { readOnlySpecialist: true },
+  planner: { readOnlySpecialist: true },
+  reviewer: { readOnlySpecialist: true },
+  security: { readOnlySpecialist: true },
+  tester: { readOnlySpecialist: true },
+} as const satisfies Record<string, { readonly readOnlySpecialist: boolean }>;
+
+export const ALLOWED_PLANNING_DISPATCH_AGENTS = new Set<string>(
+  Object.entries(PLANNING_DISPATCH_AGENT_REGISTRY)
+    .filter(([, metadata]) => metadata.readOnlySpecialist)
+    .map(([agentId]) => agentId),
+);
+
+let warnedMissingPlanningDispatchAgentClasses = false;
+
+function isReadOnlySpecialist(agentId: string): boolean {
+  const metadata = PLANNING_DISPATCH_AGENT_REGISTRY[agentId as keyof typeof PLANNING_DISPATCH_AGENT_REGISTRY];
+  return metadata?.readOnlySpecialist === true;
+}
+
+function allowedPlanningDispatchAgentsList(): string {
+  return [...ALLOWED_PLANNING_DISPATCH_AGENTS].join(", ");
+}
+
+function warnMissingPlanningDispatchAgentClasses(unitType: string, mode: string, toolName: string): void {
+  if (warnedMissingPlanningDispatchAgentClasses) return;
+  warnedMissingPlanningDispatchAgentClasses = true;
+  // TODO(#5060): Remove this migration shim once all subagent/task callers are verified to forward agent identities.
+  const message = `[write-gate] planning-dispatch: shouldBlockPlanningUnit called for tool "${toolName}" ` +
+    `on unit "${unitType}" without agentClasses - stale caller; blocking dispatch.`;
+  console.warn(message);
+  logWarning("intercept", message, {
+    unitType,
+    mode,
+    toolName,
+  });
+}
+
+/**
+ * Read-only / planning-safe tools that any non-"all" mode allows. Mirrors
+ * QUEUE_SAFE_TOOLS / GATE_SAFE_TOOLS but is the inclusive default for
+ * planning units (which need their full discussion + research surface).
+ *
+ * gsd_* MCP tools are passed through unconditionally — they have their own
+ * domain validation (e.g. depth-verification gate, single-writer DB).
+ */
 const PLANNING_SAFE_TOOLS = new Set([
   "read", "grep", "find", "ls", "glob",
   "ask_user_questions",
@@ -555,6 +614,7 @@ function isPathUnderGsd(absPath: string, basePath: string): boolean {
 function matchesAllowedGlob(absPath: string, basePath: string, globs: readonly string[]): boolean {
   const rel = relative(basePath, absPath);
   if (rel.startsWith("..") || isAbsolute(rel)) return false;
+  // Normalize Windows separators for minimatch.
   const posix = rel.split(sep).join("/");
   return globs.some(g => minimatch(posix, g, { dot: false, nocase: false }));
 }
@@ -576,10 +636,24 @@ function blockReason(unitType: string, mode: string, what: string): string {
  *   - "read-only"  → blocks all writes, bash, and subagent dispatch.
  *   - "planning"   → blocks writes to paths outside <basePath>/.gsd/,
  *                    bash that isn't read-only, and subagent dispatch.
+ *   - "planning-dispatch"
+ *                  → like "planning", but permits subagent dispatch only
+ *                    when every forwarded agent class is globally allowed
+ *                    and listed in the policy's allowedSubagents.
  *   - "docs"       → like "planning" but also allows writes to paths
  *                    matching `allowedPathGlobs` relative to basePath.
  *
- * `policy` of null means "no manifest resolved" — pass-through.
+ * `pathOrCommand` is the file path for write/edit-shaped tools and the
+ * shell command for bash. Other tools ignore this argument.
+ *
+ * `policy` of null means "no manifest resolved" — pass-through. Callers
+ * that have no active unit (interactive sessions) pass null and this
+ * predicate is a no-op.
+ *
+ * `agentClasses` is supplied by the tool hook for subagent-shaped calls. If
+ * absent, planning-dispatch fails closed so stale callers cannot silently
+ * bypass the agent allowlists. An explicitly supplied-but-empty list is
+ * allowed through so the downstream tool call can reject the malformed input.
  */
 export function shouldBlockPlanningUnit(
   toolName: string,
@@ -587,26 +661,77 @@ export function shouldBlockPlanningUnit(
   basePath: string,
   unitType: string,
   policy: ToolsPolicy | null | undefined,
+  agentClasses?: readonly string[],
 ): { block: boolean; reason?: string } {
   if (!policy) return { block: false };
   if (policy.mode === "all") return { block: false };
 
   const tool = toolName;
 
+  // Read-only mode: only Read-class tools are permitted.
   if (policy.mode === "read-only") {
     if (PLANNING_SAFE_TOOLS.has(tool)) return { block: false };
     if (tool.startsWith("gsd_")) return { block: false };
     if (PLANNING_WRITE_TOOLS.has(tool) || tool === "bash" || PLANNING_SUBAGENT_TOOLS.has(tool)) {
       return { block: true, reason: blockReason(unitType, policy.mode, `${tool} is not permitted (read-only)`) };
     }
+    // Unknown tool in read-only mode — block by default.
     return { block: true, reason: blockReason(unitType, policy.mode, `tool "${tool}" is not on the read-only allowlist`) };
   }
 
-  // planning / docs modes
+  // planning / planning-dispatch / docs modes share the same surface for safe tools, bash, and subagent.
   if (PLANNING_SAFE_TOOLS.has(tool)) return { block: false };
   if (tool.startsWith("gsd_")) return { block: false };
 
   if (PLANNING_SUBAGENT_TOOLS.has(tool)) {
+    if (policy.mode === "planning-dispatch") {
+      const requested = (agentClasses ?? []).map(a => a.trim()).filter(Boolean);
+      const allowedSubagents = Array.isArray(policy.allowedSubagents) ? policy.allowedSubagents : [];
+      const allowed = new Set(allowedSubagents);
+      // When agentClasses is undefined, the caller has not been updated to extract
+      // agent identities yet. Block and warn so stale callers surface in telemetry
+      // instead of silently bypassing the gate.
+      if (agentClasses === undefined) {
+        warnMissingPlanningDispatchAgentClasses(unitType, policy.mode, tool);
+        return {
+          block: true,
+          reason: blockReason(
+            unitType,
+            policy.mode,
+            `subagent dispatch blocked: stale caller did not supply agent identities for "${tool}"; update extractSubagentAgentClasses to handle this input shape`,
+          ),
+        };
+      }
+      // agentClasses was explicitly provided but resolved to an empty list (for
+      // example, a bare tool call with no agent field). Pass through; no agents
+      // to validate means the downstream tool call itself will fail.
+      if (requested.length === 0) {
+        return { block: false };
+      }
+      const globallyDisallowed = requested.find(a => !isReadOnlySpecialist(a));
+      if (globallyDisallowed) {
+        return {
+          block: true,
+          reason: blockReason(
+            unitType,
+            policy.mode,
+            `subagent dispatch of "${globallyDisallowed}" not permitted; only read-only specialists (${allowedPlanningDispatchAgentsList()}) may be dispatched from planning-dispatch units`,
+          ),
+        };
+      }
+      const disallowedByPolicy = requested.find(a => !allowed.has(a));
+      if (disallowedByPolicy) {
+        return {
+          block: true,
+          reason: blockReason(
+            unitType,
+            policy.mode,
+            `subagent dispatch of "${disallowedByPolicy}" not permitted by ToolsPolicy.allowedSubagents; permitted agents for this unit: ${allowedSubagents.join(", ")}`,
+          ),
+        };
+      }
+      return { block: false };
+    }
     return { block: true, reason: blockReason(unitType, policy.mode, `subagent dispatch is not permitted in planning units`) };
   }
 
@@ -628,8 +753,10 @@ export function shouldBlockPlanningUnit(
     }
     const absPath = isAbsolute(pathOrCommand) ? pathOrCommand : resolve(basePath, pathOrCommand);
 
+    // Always allow .gsd/ writes — that's where planning artifacts live.
     if (isPathUnderGsd(absPath, basePath)) return { block: false };
 
+    // docs mode additionally allows the manifest's allowedPathGlobs.
     if (policy.mode === "docs" && matchesAllowedGlob(absPath, basePath, policy.allowedPathGlobs)) {
       return { block: false };
     }
@@ -644,5 +771,8 @@ export function shouldBlockPlanningUnit(
     };
   }
 
+  // Unknown tool name — pass through. Other layers (queue, pending-gate,
+  // CONTEXT.md write) catch known mutating shapes; defaulting to allow here
+  // avoids breaking gsd_* MCP tools or future safe additions.
   return { block: false };
 }

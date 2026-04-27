@@ -114,6 +114,7 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "post_unit_hooks",
   "pre_dispatch_hooks",
   "dynamic_routing",
+  "disabled_model_providers",
   "uok",
   "token_profile",
   "phases",
@@ -129,9 +130,11 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "reactive_execution",
   "gate_evaluation",
   "github",
+  "orchestrator",
   "service_tier",
   "forensics_dedup",
   "show_token_cost",
+  "min_request_interval_ms",
   "stale_commit_threshold_minutes",
   "context_management",
   "experimental",
@@ -320,6 +323,8 @@ export interface GSDPreferences {
   post_unit_hooks?: PostUnitHookConfig[];
   pre_dispatch_hooks?: PreDispatchHookConfig[];
   dynamic_routing?: DynamicRoutingConfig;
+  /** Provider IDs to exclude from /model and automatic model routing while leaving tool auth intact. */
+  disabled_model_providers?: string[];
   /** Unified Orchestration Kernel controls (default-on, with opt-out and emergency legacy fallback). */
   uok?: UokPreferences;
   /** Per-model capability overrides. Deep-merged with built-in profiles for capability-aware routing (ADR-004). */
@@ -359,12 +364,16 @@ export interface GSDPreferences {
   gate_evaluation?: GateEvaluationConfig;
   /** GitHub sync configuration. Opt-in: syncs GSD events to GitHub Issues, Milestones, and PRs. */
   github?: GitHubSyncConfig;
+  /** Orchestrator to use for auto-mode execution ("legacy" is default). Configured via GSD_ORCHESTRATOR env or prefs.orchestrator. */
+  orchestrator?: string;
   /** OpenAI service tier preference. "priority" = 2x cost, faster. "flex" = 0.5x cost, slower. Only affects gpt-5.4 models. */
   service_tier?: "priority" | "flex";
   /** Opt-in: search existing issues and PRs before filing from /gsd forensics. Uses additional AI tokens. */
   forensics_dedup?: boolean;
   /** Opt-in: show per-prompt and cumulative session token cost in the footer. Default: false. */
   show_token_cost?: boolean;
+  /** Proactive rate limiting: minimum milliseconds between auto-mode LLM requests. Prevents 429s on rate-limited providers. 0 = disabled (default). */
+  min_request_interval_ms?: number;
   /**
    * Minutes without a commit before flagging uncommitted changes as stale.
    * When the threshold is exceeded and the working tree is dirty, doctor will

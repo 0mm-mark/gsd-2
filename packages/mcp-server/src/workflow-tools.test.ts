@@ -889,6 +889,32 @@ export const executeTaskComplete = async (params, projectDir) => {
     }
   });
 
+  it("gsd_milestone_generate_id skips DB-only queued milestone rows", async () => {
+    const base = makeTmpBase();
+    try {
+      const server = makeMockServer();
+      registerWorkflowTools(server as any);
+      const tool = server.tools.find((t) => t.name === "gsd_milestone_generate_id");
+      assert.ok(tool, "milestone ID tool should be registered");
+
+      const first = await tool!.handler({ projectDir: base });
+      assert.equal((first as any).content[0].text, "M001");
+      assert.ok(!existsSync(join(base, ".gsd", "milestones", "M001")), "ID generation should not create a milestone dir");
+
+      closeDatabase();
+
+      const second = await tool!.handler({ projectDir: base });
+      assert.equal((second as any).content[0].text, "M002");
+
+      const rows = _getAdapter()!
+        .prepare("SELECT id FROM milestones ORDER BY id")
+        .all() as Array<Record<string, unknown>>;
+      assert.deepEqual(rows.map((row) => row["id"]), ["M001", "M002"]);
+    } finally {
+      cleanup(base);
+    }
+  });
+
   it("gsd_plan_task reopens the DB before inline task planning writes", async () => {
     const base = makeTmpBase();
     try {
@@ -1656,6 +1682,58 @@ describe("validateProjectDir", () => {
         process.env.GSD_WORKFLOW_PROJECT_ROOT = prevRoot;
       }
       cleanup(allowedRoot);
+    }
+  });
+
+  it("accepts a worktree under the allowed root external .gsd state target", () => {
+    const allowedRoot = makeTmpBase();
+    const externalState = makeTmpBase();
+    const worktree = join(externalState, "worktrees", "M001");
+    mkdirSync(worktree, { recursive: true });
+    rmSync(join(allowedRoot, ".gsd"), { recursive: true, force: true });
+    symlinkSync(externalState, join(allowedRoot, ".gsd"), "dir");
+
+    const prevRoot = process.env.GSD_WORKFLOW_PROJECT_ROOT;
+    try {
+      process.env.GSD_WORKFLOW_PROJECT_ROOT = allowedRoot;
+      const result = validateProjectDir(worktree);
+      assert.equal(result, realpathSync(worktree));
+    } finally {
+      if (prevRoot === undefined) {
+        delete process.env.GSD_WORKFLOW_PROJECT_ROOT;
+      } else {
+        process.env.GSD_WORKFLOW_PROJECT_ROOT = prevRoot;
+      }
+      cleanup(allowedRoot);
+      cleanup(externalState);
+    }
+  });
+
+  it("rejects external-state sibling paths that only share a prefix", () => {
+    const allowedRoot = makeTmpBase();
+    const externalState = makeTmpBase();
+    const sibling = `${externalState}-sibling`;
+    const siblingWorktree = join(sibling, "worktrees", "M001");
+    mkdirSync(siblingWorktree, { recursive: true });
+    rmSync(join(allowedRoot, ".gsd"), { recursive: true, force: true });
+    symlinkSync(externalState, join(allowedRoot, ".gsd"), "dir");
+
+    const prevRoot = process.env.GSD_WORKFLOW_PROJECT_ROOT;
+    try {
+      process.env.GSD_WORKFLOW_PROJECT_ROOT = allowedRoot;
+      assert.throws(
+        () => validateProjectDir(siblingWorktree),
+        /configured workflow project root/,
+      );
+    } finally {
+      if (prevRoot === undefined) {
+        delete process.env.GSD_WORKFLOW_PROJECT_ROOT;
+      } else {
+        process.env.GSD_WORKFLOW_PROJECT_ROOT = prevRoot;
+      }
+      cleanup(allowedRoot);
+      cleanup(externalState);
+      cleanup(sibling);
     }
   });
 
