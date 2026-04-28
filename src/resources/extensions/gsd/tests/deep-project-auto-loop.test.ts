@@ -15,6 +15,7 @@ import {
   clearPendingAutoStart,
   checkDeepProjectSetupAfterTurn,
   clearPendingDeepProjectSetup,
+  showSmartEntry,
   startDeepProjectSetupForeground,
 } from "../guided-flow.ts";
 import type { GSDPreferences } from "../preferences.ts";
@@ -556,6 +557,54 @@ test("deep project setup: research-project blocker placeholder is a file, not th
     assert.equal(existsSync(join(base, ".gsd", "research", "PROJECT-RESEARCH-BLOCKER.md")), true);
     assert.equal(verifyExpectedArtifact("research-project", "PROJECT-RESEARCH", base), true);
   } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("deep project setup: empty legacy pseudo-milestone dirs do not block first real milestone", async () => {
+  const base = makeBase();
+  const previousWorkflowPath = process.env.GSD_WORKFLOW_PATH;
+  const workflowPath = join(base, "GSD-WORKFLOW.md");
+  try {
+    writeFileSync(workflowPath, "# Test Workflow\n");
+    process.env.GSD_WORKFLOW_PATH = workflowPath;
+
+    const validProject = readFileSync(
+      new URL("../schemas/__fixtures__/valid-project.md", import.meta.url),
+      "utf-8",
+    );
+    const validRequirements = readFileSync(
+      new URL("../schemas/__fixtures__/valid-requirements.md", import.meta.url),
+      "utf-8",
+    );
+    writeFileSync(
+      join(base, ".gsd", "PREFERENCES.md"),
+      "---\nplanning_depth: deep\nworkflow_prefs_captured: true\n---\n",
+    );
+    writeFileSync(join(base, ".gsd", "PROJECT.md"), validProject);
+    writeFileSync(join(base, ".gsd", "REQUIREMENTS.md"), validRequirements);
+    mkdirSync(join(base, ".gsd", "runtime"), { recursive: true });
+    writeFileSync(join(base, ".gsd", "runtime", "research-decision.json"), '{"decision":"skip"}\n');
+
+    for (const legacy of ["PROJECT", "RESEARCH-PROJECT", "WORKFLOW-PREFS"]) {
+      mkdirSync(join(base, ".gsd", "milestones", legacy), { recursive: true });
+    }
+
+    const messages: unknown[] = [];
+    await showSmartEntry(makeCtx(`legacy-${randomUUID()}`) as any, makePi(messages) as any, base);
+
+    assert.equal(messages.length, 1, "first real milestone discussion should dispatch");
+    assert.equal(existsSync(join(base, ".gsd", "milestones", "PROJECT")), false);
+    assert.equal(existsSync(join(base, ".gsd", "milestones", "RESEARCH-PROJECT")), false);
+    assert.equal(existsSync(join(base, ".gsd", "milestones", "WORKFLOW-PREFS")), false);
+  } finally {
+    if (previousWorkflowPath === undefined) delete process.env.GSD_WORKFLOW_PATH;
+    else process.env.GSD_WORKFLOW_PATH = previousWorkflowPath;
+    clearPendingAutoStart(base);
+    try {
+      const { closeDatabase } = await import("../gsd-db.ts");
+      closeDatabase();
+    } catch {}
     rmSync(base, { recursive: true, force: true });
   }
 });

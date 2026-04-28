@@ -164,6 +164,13 @@ const FOREGROUND_DEEP_SETUP_RULE_NAMES = new Set([
   "deep: pre-planning (no REQUIREMENTS) → discuss-requirements",
   "deep: pre-planning (no research decision) → research-decision",
 ]);
+const LEGACY_DEEP_SETUP_PSEUDO_MILESTONE_DIRS = new Set([
+  "PROJECT",
+  "REQUIREMENTS",
+  "RESEARCH-DECISION",
+  "RESEARCH-PROJECT",
+  "WORKFLOW-PREFS",
+]);
 const FOREGROUND_DEEP_SETUP_QUESTION_POLICY = `## Foreground Deep Setup Question Policy
 
 This stage is running inside the foreground \`/gsd new-project --deep\` interview. Ask user questions in plain chat only.
@@ -180,6 +187,39 @@ function _getPendingAutoStart(basePath?: string): PendingAutoStartEntry | null {
   if (basePath) return pendingAutoStartMap.get(basePath) ?? null;
   if (pendingAutoStartMap.size === 1) return pendingAutoStartMap.values().next().value!;
   return null;
+}
+
+function hasNestedFileOrSymlink(dir: string): boolean {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isFile() || entry.isSymbolicLink()) return true;
+    if (entry.isDirectory() && hasNestedFileOrSymlink(join(dir, entry.name))) return true;
+  }
+  return false;
+}
+
+function clearEmptyLegacyDeepSetupPseudoMilestones(basePath: string, entries: string[]): string[] {
+  const mDir = milestonesDir(basePath);
+  const remaining: string[] = [];
+  for (const entry of entries) {
+    if (!LEGACY_DEEP_SETUP_PSEUDO_MILESTONE_DIRS.has(entry)) {
+      remaining.push(entry);
+      continue;
+    }
+
+    const entryPath = join(mDir, entry);
+    try {
+      if (hasNestedFileOrSymlink(entryPath)) {
+        remaining.push(entry);
+        continue;
+      }
+      rmSync(entryPath, { recursive: true, force: true });
+      logWarning("guided", `Self-heal: removed empty legacy deep setup pseudo-milestone directory ${entry}`);
+    } catch (err) {
+      remaining.push(entry);
+      logWarning("guided", `legacy deep setup pseudo-milestone cleanup failed for ${entry}: ${(err as Error).message}`);
+    }
+  }
+  return remaining;
 }
 
 /**
@@ -1829,7 +1869,7 @@ export async function showSmartEntry(
       const mDir = milestonesDir(basePath);
       if (existsSync(mDir)) {
         try {
-          const entries = readdirSync(mDir);
+          const entries = clearEmptyLegacyDeepSetupPseudoMilestones(basePath, readdirSync(mDir));
           if (entries.length > 0) {
             ctx.ui.notify(
               `Milestone directory has ${entries.length} entries but none were recognized as milestones. ` +
