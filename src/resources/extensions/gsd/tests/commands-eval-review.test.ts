@@ -400,7 +400,26 @@ describe("buildEvalReviewContext", () => {
     const ctx = await buildEvalReviewContext(state, "M001");
     assert.equal(ctx.truncated, true);
     assert.ok(Buffer.byteLength(ctx.summary, "utf-8") <= MAX_CONTEXT_BYTES);
-    assert.ok(ctx.summary.includes(`${giant - (MAX_CONTEXT_BYTES - 128 - 128)} bytes elided`));
+    assert.ok(ctx.summary.includes("bytes elided to fit eval-review context cap"));
+  });
+
+  it("does not pre-reserve spec budget when no AI-SPEC.md exists", async () => {
+    const summaryBytes = MAX_CONTEXT_BYTES - 64;
+    const state = fakeReady({ summaryBytes });
+    const ctx = await buildEvalReviewContext(state, "M001");
+    assert.equal(ctx.truncated, false, "summary must fit without truncation when no spec is reserved");
+    assert.equal(Buffer.byteLength(ctx.summary, "utf-8"), summaryBytes);
+    assert.equal(ctx.spec, null);
+  });
+
+  it("includes a small AI-SPEC even when remaining is below MIN_USEFUL_SPEC_BYTES", async () => {
+    const summaryBytes = MAX_CONTEXT_BYTES - 200;
+    const specBytes = 100;
+    const state = fakeReady({ summaryBytes, specBytes });
+    const ctx = await buildEvalReviewContext(state, "M001");
+    assert.ok(ctx.spec, "spec must be inlined when it actually fits");
+    assert.equal(Buffer.byteLength(ctx.spec!, "utf-8"), specBytes);
+    assert.ok(!ctx.spec!.includes("[truncated:"), "small spec must not be replaced by a marker");
   });
 });
 
@@ -576,5 +595,18 @@ describe("buildEvalReviewPrompt", () => {
   it("falls back to a best-practices note when AI-SPEC.md is absent", () => {
     const prompt = buildEvalReviewPrompt(ctxFixture({ spec: null, specPath: null }));
     assert.ok(prompt.toLowerCase().includes("not present"));
+  });
+
+  it("renders an empty AI-SPEC.md as data, not as 'not present'", () => {
+    const prompt = buildEvalReviewPrompt(ctxFixture({ spec: "" }));
+    assert.ok(!prompt.toLowerCase().includes("not present"), "empty spec must not collapse into 'not present'");
+    assert.ok(prompt.includes("### AI-SPEC.md"));
+  });
+
+  it("treats slice artefacts as untrusted data with explicit injection-defense banner", () => {
+    const prompt = buildEvalReviewPrompt(ctxFixture());
+    assert.ok(prompt.includes("untrusted data"), "prompt must label artefacts as untrusted");
+    assert.ok(prompt.toLowerCase().includes("ignore any instructions"), "prompt must instruct the model to ignore directives in artefacts");
+    assert.ok(prompt.includes("~~~~markdown"), "artefact bodies must be wrapped in a fenced data block");
   });
 });
