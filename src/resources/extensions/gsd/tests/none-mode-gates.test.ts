@@ -71,23 +71,52 @@ try {
 }
 });
 
-test('shouldUseWorktreeIsolation returns false for worktree prefs before first commit', () => {
+test('worktree isolation is disabled for an unborn repo until the first commit', (t) => {
   const repo = mkdtempSync(join(tmpdir(), "gsd-unborn-worktree-"));
-  try {
-    execFileSync("git", ["init"], { cwd: repo, stdio: ["ignore", "ignore", "ignore"] });
-    mkdirSync(join(repo, ".gsd"), { recursive: true });
-    writeFileSync(join(repo, ".gsd", "PREFERENCES.md"), `---\ngit:\n  isolation: "worktree"\n---\n`);
-    invalidateAllCaches();
-
-    assert.deepStrictEqual(
-      shouldUseWorktreeIsolation(repo),
-      false,
-      "worktree isolation should wait until the repo has a committed HEAD",
-    );
-  } finally {
+  t.after(() => {
     rmSync(repo, { recursive: true, force: true });
     invalidateAllCaches();
-  }
+  });
+
+  execFileSync("git", ["init"], { cwd: repo, stdio: ["ignore", "ignore", "ignore"] });
+  mkdirSync(join(repo, ".gsd"), { recursive: true });
+  writeFileSync(join(repo, ".gsd", "PREFERENCES.md"), [
+    "---",
+    "git:",
+    '  isolation: "worktree"',
+    "---",
+    "",
+  ].join("\n"));
+  invalidateAllCaches();
+
+  assert.deepStrictEqual(
+    getIsolationMode(repo),
+    "none",
+    "startup gates should not attempt worktree isolation before HEAD exists",
+  );
+  assert.deepStrictEqual(
+    shouldUseWorktreeIsolation(repo),
+    false,
+    "worktree-specific gates should share the same unborn-repo guard",
+  );
+
+  execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: repo });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: repo });
+  writeFileSync(join(repo, "README.md"), "seed\n");
+  execFileSync("git", ["add", "."], { cwd: repo });
+  execFileSync("git", ["commit", "-m", "chore: init"], { cwd: repo, stdio: ["ignore", "ignore", "ignore"] });
+  invalidateAllCaches();
+
+  assert.deepStrictEqual(
+    getIsolationMode(repo),
+    "worktree",
+    "worktree isolation should re-enable once the repo has a committed HEAD",
+  );
+  assert.deepStrictEqual(
+    shouldUseWorktreeIsolation(repo),
+    true,
+    "worktree-specific gates should re-enable once the repo has a committed HEAD",
+  );
 });
 
 // Test 4: shouldUseWorktreeIsolation returns false for no prefs (default: none)
