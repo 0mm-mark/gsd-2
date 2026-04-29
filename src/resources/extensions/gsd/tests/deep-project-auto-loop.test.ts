@@ -853,6 +853,18 @@ test("deep project setup: remote question failure is treated as waiting for user
   );
 });
 
+test("deep project setup: plain-text approval wait is treated as waiting for user input", () => {
+  assert.equal(
+    isAwaitingUserInput([
+      {
+        role: "assistant",
+        content: "Good, PROJECT.md confirms localStorage for persistence. Requirements look solid. Waiting for your confirmation before writing.",
+      },
+    ]),
+    true,
+  );
+});
+
 test("deep project setup: discuss-milestone question failure pauses instead of artifact-retrying", async () => {
   const base = makeBase();
   try {

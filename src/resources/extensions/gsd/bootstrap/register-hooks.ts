@@ -23,10 +23,12 @@ import { installNotifyInterceptor } from "./notify-interceptor.js";
 import { initNotificationStore } from "../notification-store.js";
 import { initNotificationWidget } from "../notification-widget.js";
 import { extractSubagentAgentClasses } from "./subagent-input.js";
+import { shouldPauseForUserApprovalQuestion } from "../user-input-boundary.js";
 
 // Skip the welcome screen on the very first session_start — cli.ts already
 // printed it before the TUI launched. Only re-print on /clear (subsequent sessions).
 let isFirstSession = true;
+let approvalQuestionAbortInFlight = false;
 
 async function deriveGsdState(basePath: string) {
   const { deriveState } = await import("../state.js");
@@ -76,6 +78,7 @@ export function registerHooks(
     }
     resetWriteGateState();
     resetToolCallLoopGuard();
+    approvalQuestionAbortInFlight = false;
     await resetAskUserQuestionsTurnCache();
     await syncServiceTierStatus(ctx);
     await applyDisabledModelProviderPolicy(ctx);
@@ -197,6 +200,7 @@ export function registerHooks(
   });
 
   pi.on("agent_end", async (event, ctx: ExtensionContext) => {
+    approvalQuestionAbortInFlight = false;
     resetToolCallLoopGuard();
     await resetAskUserQuestionsTurnCache();
     const { handleAgentEnd } = await import("./agent-end-recovery.js");
@@ -303,6 +307,34 @@ export function registerHooks(
         `failed to write compaction snapshot: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
+  });
+
+  pi.on("message_update", async (event, ctx: ExtensionContext) => {
+    if (approvalQuestionAbortInFlight) return;
+
+    const dash = getAutoRuntimeSnapshot();
+    let unitType = dash.currentUnit?.type;
+    let unitId = dash.currentUnit?.id;
+
+    if (!unitType) {
+      try {
+        const { getPendingDeepProjectSetupUnitForContext } = await import("../guided-flow.js");
+        const pending = getPendingDeepProjectSetupUnitForContext(ctx, process.cwd());
+        unitType = pending?.unitType;
+        unitId = pending?.unitId;
+      } catch {
+        // Best-effort foreground detection only.
+      }
+    }
+
+    if (!shouldPauseForUserApprovalQuestion(unitType, [event.message])) return;
+
+    approvalQuestionAbortInFlight = true;
+    ctx.ui.notify(
+      `${unitType}${unitId ? ` ${unitId}` : ""} is waiting for your approval - pausing before more tool calls run.`,
+      "info",
+    );
+    ctx.abort();
   });
 
   pi.on("session_shutdown", async (_event, ctx: ExtensionContext) => {

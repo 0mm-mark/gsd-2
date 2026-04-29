@@ -297,6 +297,18 @@ function _getPendingDeepProjectSetupForContext(
   return matches.length === 1 ? matches[0]! : null;
 }
 
+export function getPendingDeepProjectSetupUnitForContext(
+  ctx: ExtensionContext | undefined,
+  basePath?: string,
+): { unitType: string; unitId: string } | null {
+  const entry = _getPendingDeepProjectSetupForContext(ctx, basePath);
+  if (!entry?.currentUnitType || !entry.currentUnitId) return null;
+  return {
+    unitType: entry.currentUnitType,
+    unitId: entry.currentUnitId,
+  };
+}
+
 export async function startDeepProjectSetupForeground(
   ctx: ExtensionCommandContext,
   pi: ExtensionAPI,

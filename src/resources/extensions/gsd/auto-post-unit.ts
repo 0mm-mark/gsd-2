@@ -16,6 +16,7 @@ import { deriveState } from "./state.js";
 import { logWarning, logError } from "./workflow-logger.js";
 import { loadFile, parseSummary, resolveAllOverrides } from "./files.js";
 import { loadPrompt } from "./prompt-loader.js";
+import { isAwaitingUserInput } from "./user-input-boundary.js";
 import {
   gsdRoot,
   resolveSliceFile,
@@ -309,40 +310,7 @@ export const USER_DRIVEN_DEEP_UNITS = new Set([
   "discuss-milestone",
   "research-decision",
 ]);
-
-function extractTextFromMessage(msg: unknown): string {
-  if (!msg || typeof msg !== "object") return "";
-  const content = (msg as { content?: unknown }).content;
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  const parts: string[] = [];
-  for (const block of content) {
-    if (!block || typeof block !== "object") continue;
-    const typed = block as { type?: unknown; text?: unknown };
-    if (typed.type === "text" && typeof typed.text === "string") {
-      parts.push(typed.text);
-    }
-  }
-  return parts.join("\n");
-}
-
-function lastAssistantText(messages: unknown[] | undefined): string {
-  if (!Array.isArray(messages)) return "";
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const text = extractTextFromMessage(messages[i]).trim();
-    if (text) return text;
-  }
-  return "";
-}
-
-export function isAwaitingUserInput(messages: unknown[] | undefined): boolean {
-  const text = lastAssistantText(messages);
-  if (!text) return false;
-  if (/ask_user_questions was cancelled before receiving a response/i.test(text)) return true;
-  if (/(?:Remote (?:auth failed|questions failed|channel configured but returned no result|questions timed out|questions timed out or failed)|Failed to send questions via)/i.test(text)) return true;
-  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  return lines.some((line) => line.endsWith("?"));
-}
+export { isAwaitingUserInput } from "./user-input-boundary.js";
 
 export async function autoCommitUnit(
   basePath: string,

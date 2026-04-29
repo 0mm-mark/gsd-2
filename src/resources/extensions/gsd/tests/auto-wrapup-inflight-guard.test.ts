@@ -191,3 +191,27 @@ describe("#4365: tool_execution_start hook must pass toolName to markToolStart",
     );
   });
 });
+
+describe("deep setup approval questions pause immediately", () => {
+  test("register-hooks aborts active question turns during message_update", () => {
+    const startMarker = 'pi.on("message_update"';
+    const endMarker = 'pi.on("session_shutdown"';
+    const messageUpdateSection = registerHooksSrc.slice(
+      registerHooksSrc.indexOf(startMarker),
+      registerHooksSrc.indexOf(endMarker),
+    );
+
+    assert.ok(
+      messageUpdateSection.length > 0,
+      "Could not locate message_update approval pause handler",
+    );
+    assert.ok(
+      messageUpdateSection.includes("shouldPauseForUserApprovalQuestion"),
+      "message_update must detect approval/question boundaries",
+    );
+    assert.ok(
+      messageUpdateSection.includes("ctx.abort()"),
+      "message_update must abort the current turn before more tool calls run",
+    );
+  });
+});
