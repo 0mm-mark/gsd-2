@@ -65,5 +65,5 @@ jobs:
           git push --force-with-lease origin feature/pluggable-orchestrator
           echo "=== Successfully rebased and pushed feature/pluggable-orchestrator ==="
 
-          git push --force-with-lease origin feature/pluggable-orchestrator:experimental
+          git push --force-with-lease origin HEAD:refs/heads/experimental
           echo "=== Successfully rebased and pushed experimental ==="
