@@ -601,7 +601,12 @@ describe('SessionManager.resolveCLIPath', () => {
       writeFileSync(shimPath, '', 'utf8');
       process.env['PATH'] = [tmp, originalPath].filter(Boolean).join(delimiter);
 
-      assert.equal(SessionManager.resolveCLIPath(), resolve(shimPath));
+      const resolvedPath = SessionManager.resolveCLIPath();
+      if (process.platform === 'win32') {
+        assert.equal(resolvedPath.toLowerCase(), resolve(shimPath).toLowerCase());
+      } else {
+        assert.equal(resolvedPath, resolve(shimPath));
+      }
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -617,7 +622,12 @@ describe('SessionManager.resolveCLIPath', () => {
       writeFileSync(shimPath, '', 'utf8');
       process.env['Path'] = tmp;
 
-      assert.equal(SessionManager.resolveCLIPath(), resolve(shimPath));
+      const resolvedPath = SessionManager.resolveCLIPath();
+      if (process.platform === 'win32') {
+        assert.equal(resolvedPath.toLowerCase(), resolve(shimPath).toLowerCase());
+      } else {
+        assert.equal(resolvedPath, resolve(shimPath));
+      }
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

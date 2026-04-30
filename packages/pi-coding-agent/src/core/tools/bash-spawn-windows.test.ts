@@ -23,16 +23,22 @@ import { spawn } from "node:child_process";
 // Verify the spawn option pattern used across the codebase.
 // This is a static/structural test — it reads the source files and asserts
 // they use the platform-guarded detached flag.
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+function resolveSourcePath(localPath: string, distFallbackPath: string): string {
+	const local = join(__dirname, localPath);
+	if (existsSync(local)) return local;
+	return join(__dirname, distFallbackPath);
+}
+
 const SPAWN_FILES = [
-	join(__dirname, "bash.ts"),
-	join(__dirname, "..", "bash-executor.ts"),
-	join(__dirname, "..", "..", "utils", "shell.ts"),
+	resolveSourcePath("bash.ts", "../../../src/core/tools/bash.ts"),
+	resolveSourcePath("../bash-executor.ts", "../../../src/core/tools/bash-executor.ts"),
+	resolveSourcePath("../../utils/shell.ts", "../../../src/utils/shell.ts"),
 ];
 
 test("spawn calls use platform-guarded detached flag (no unconditional detached: true)", () => {
@@ -57,7 +63,7 @@ test("spawn calls use platform-guarded detached flag (no unconditional detached:
 });
 
 test("killProcessTree does not use detached: true for taskkill on Windows", () => {
-	const shellFile = join(__dirname, "..", "..", "utils", "shell.ts");
+	const shellFile = resolveSourcePath("../../utils/shell.ts", "../../../src/utils/shell.ts");
 	const content = readFileSync(shellFile, "utf-8");
 
 	// Find the taskkill spawn call and ensure it doesn't have detached: true
