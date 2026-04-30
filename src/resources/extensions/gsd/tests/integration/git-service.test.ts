@@ -505,6 +505,31 @@ describe('git-service', async () => {
     rmSync(repo, { recursive: true, force: true });
   });
 
+  test('GitServiceImpl: task context keyFiles scope autoCommit staging', () => {
+    const repo = initTempRepo();
+    const svc = new GitServiceImpl(repo);
+
+    createFile(repo, "src/task.ts", "export const task = true;");
+    createFile(repo, "src/unrelated.ts", "export const unrelated = true;");
+
+    const msg = svc.autoCommit("execute-task", "M001/S01/T01", [], {
+      taskId: "S01/T01",
+      taskTitle: "implement scoped task",
+      oneLiner: "Added scoped task implementation",
+      keyFiles: ["src/task.ts"],
+    });
+    assert.ok(msg !== null, "autoCommit with keyFiles should commit scoped task files");
+
+    const committed = run("git show --name-only --format= HEAD", repo);
+    assert.ok(committed.includes("src/task.ts"), "key file is committed");
+    assert.ok(!committed.includes("src/unrelated.ts"), "unrelated dirty file is not committed");
+
+    const status = run("git status --porcelain", repo);
+    assert.ok(status.includes("src/unrelated.ts"), "unrelated dirty file remains in working tree");
+
+    rmSync(repo, { recursive: true, force: true });
+  });
+
   // ─── GitServiceImpl: empty-after-staging guard ─────────────────────────
 
   test('GitServiceImpl: empty-after-staging guard', () => {
