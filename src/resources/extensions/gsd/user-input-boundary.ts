@@ -53,7 +53,11 @@ function lastAssistantText(messages: unknown[] | undefined): string {
 
 function anyMessageMatches(messages: unknown[] | undefined, pattern: RegExp): boolean {
   if (!Array.isArray(messages)) return false;
-  return messages.some((msg) => pattern.test(extractTextFromMessage(msg)));
+  return messages.some((msg) => {
+    if (!msg || typeof msg !== "object") return false;
+    if ((msg as { role?: unknown }).role === "user") return false;
+    return pattern.test(extractTextFromMessage(msg));
+  });
 }
 
 function hasApprovalQuestion(text: string): boolean {

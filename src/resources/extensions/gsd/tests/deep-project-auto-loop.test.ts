@@ -1229,6 +1229,18 @@ test("deep project setup: user question does not masquerade as assistant input w
   );
 });
 
+test("deep project setup: user-quoted remote question failure does not pause auto-mode", () => {
+  const messages = [
+    {
+      role: "user",
+      content: "The log said: Remote questions failed (discord): Discord API HTTP 401",
+    },
+  ];
+
+  assert.equal(isAwaitingUserInput(messages), false);
+  assert.equal(shouldPauseForUserApprovalQuestion("discuss-project", messages), false);
+});
+
 test("deep project setup: plain-text approval wait is treated as waiting for user input", () => {
   assert.equal(
     isAwaitingUserInput([
