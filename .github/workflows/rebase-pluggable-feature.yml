@@ -37,6 +37,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+          # === Prevent "Terminal is dumb, EDITOR unset" error ===
+          export GIT_EDITOR=true
+          
           git fetch origin main --force
 
           if git rebase origin/main; then
