@@ -371,18 +371,16 @@ async function syncTaskComplete(
     }
   }
 
-  // Close the task issue
-  const closeResult = ghCloseIssue(basePath, mapping.repo, taskRecord.issueNumber);
-  if (!closeResult.ok) {
-    debugLog("github-sync", { phase: "task-close-failed", mid, sid, tid, error: closeResult.error });
-  }
-  if (!commentOk || !closeResult.ok) return;
+  if (!commentOk) return;
 
-  taskRecord.state = "closed";
+  // Do not close the GitHub issue here. The task commit may still be local-only;
+  // closing before the commit/PR reaches GitHub breaks the remote audit trail.
+  // Commit trailers / PR merge should close linked issues once code is delivered.
+  taskRecord.state = "open";
   taskRecord.lastSyncedAt = new Date().toISOString();
   setTaskRecord(mapping, mid, sid, tid, taskRecord);
 
-  debugLog("github-sync", { phase: "task-closed", mid, sid, tid, issue: taskRecord.issueNumber });
+  debugLog("github-sync", { phase: "task-complete-commented", mid, sid, tid, issue: taskRecord.issueNumber });
 }
 
 async function syncSliceComplete(
