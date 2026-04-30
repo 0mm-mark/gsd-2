@@ -1,5 +1,4 @@
 // GSD MCP Server — .gsd/ path cache tests
-// Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
 
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';

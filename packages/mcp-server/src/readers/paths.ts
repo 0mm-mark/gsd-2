@@ -1,5 +1,4 @@
 // GSD MCP Server — .gsd/ directory resolution
-// Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
 
 import { existsSync, statSync, readdirSync } from 'node:fs';
 import { join, resolve, dirname, basename } from 'node:path';

@@ -1,5 +1,4 @@
 // @gsd-build/mcp-server — Environment variable write utilities
-// Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
 //
 // Shared helpers for writing env vars to .env files, detecting project
 // destinations, and checking existing keys. Used by secure_env_collect
