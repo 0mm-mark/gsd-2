@@ -1,0 +1,62 @@
+name: Release Experimental gsd-pi (GitHub Asset)
+
+on:
+# 1. MANUAL TRIGGER (this is what you asked for)
+  workflow_dispatch:
+    inputs:
+      description:
+        description: 'Optional note about this experimental release'
+        required: false
+        default: 'Manual release after sync-experimental-branch'
+
+  # 2. OPTIONAL: Automatic on push to experimental (you can delete this block if you want *only* manual)
+  push:
+    branches:
+      - experimental
+      
+permissions:
+  contents: write   # required to create/update releases and upload assets
+
+jobs:
+  build-and-release-experimental:
+    runs-on: ubuntu-latest
+    if: github.repository == '0mm-mark/gsd-2'   # safety guard
+
+    steps:
+      - name: Checkout experimental branch (full history)
+        uses: actions/checkout@v4
+        with:
+          ref: experimental
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install dependencies (dev deps included for build)
+        run: npm ci
+
+      - name: Full monorepo build (populates all dist/ folders)
+        run: npm run build
+
+      - name: Pack the package
+        run: npm pack
+
+      - name: Create / update GitHub Release with pre-built .tgz
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: experimental
+          name: Experimental Build (gsd-pi)
+          body: |
+            **Automatic experimental build** of `gsd-pi` from the `experimental` branch.
+
+            Triggered after `sync-experimental-branch` job completed successfully.
+            Pre-built package — ready for Docker / global install.
+          draft: false
+          prerelease: true
+          files: gsd-pi-*.tgz
+          replace: true   # updates the existing "experimental" release if it already exists
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
