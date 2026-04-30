@@ -987,6 +987,11 @@ describe('git-service', async () => {
     writeIntegrationBranch(repo, "M002", "main");
     assert.deepStrictEqual(readIntegrationBranch(repo, "M002"), "main", "main branch is recorded");
 
+    // User-managed gsd/* integration branches should not be rejected unless
+    // they match a GSD-generated workflow template prefix.
+    writeIntegrationBranch(repo, "M003", "gsd/release/2026-q2");
+    assert.deepStrictEqual(readIntegrationBranch(repo, "M003"), "gsd/release/2026-q2", "user gsd/* branches are recorded");
+
     rmSync(repo, { recursive: true, force: true });
   });
 
