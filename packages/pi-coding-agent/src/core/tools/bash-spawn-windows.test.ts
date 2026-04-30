@@ -37,7 +37,7 @@ function resolveSourcePath(localPath: string, distFallbackPath: string): string 
 
 const SPAWN_FILES = [
 	resolveSourcePath("bash.ts", "../../../src/core/tools/bash.ts"),
-	resolveSourcePath("../bash-executor.ts", "../../../src/core/tools/bash-executor.ts"),
+	resolveSourcePath("bash-executor.ts", "../../../src/core/tools/bash-executor.ts"),
 	resolveSourcePath("../../utils/shell.ts", "../../../src/utils/shell.ts"),
 ];
 
