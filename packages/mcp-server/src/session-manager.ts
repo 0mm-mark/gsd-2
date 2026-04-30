@@ -30,7 +30,7 @@ const FIRE_AND_FORGET_METHODS = new Set([
 const TERMINAL_PREFIXES = ['auto-mode stopped', 'step-mode stopped'];
 
 function findExecutableOnPath(command: string): string | null {
-  const pathValue = process.env['PATH'] ?? '';
+  const pathValue = getPathEnvValue();
   if (!pathValue) return null;
   const extensions = process.platform === 'win32'
     ? ['', ...(process.env['PATHEXT'] ?? '.COM;.EXE;.BAT;.CMD')
@@ -45,6 +45,10 @@ function findExecutableOnPath(command: string): string | null {
     }
   }
   return null;
+}
+
+function getPathEnvValue(env: NodeJS.ProcessEnv = process.env): string {
+  return env['PATH'] ?? env['Path'] ?? env['path'] ?? '';
 }
 
 function isTerminalNotification(event: Record<string, unknown>): boolean {

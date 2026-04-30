@@ -566,6 +566,7 @@ describe('SessionManager', () => {
 describe('SessionManager.resolveCLIPath', () => {
   const originalGsdPath = process.env['GSD_CLI_PATH'];
   const originalPath = process.env['PATH'];
+  const originalPathTitle = process.env['Path'];
 
   afterEach(() => {
     if (originalGsdPath !== undefined) {
@@ -575,6 +576,13 @@ describe('SessionManager.resolveCLIPath', () => {
     }
     if (originalPath !== undefined) {
       process.env['PATH'] = originalPath;
+    } else {
+      delete process.env['PATH'];
+    }
+    if (originalPathTitle !== undefined) {
+      process.env['Path'] = originalPathTitle;
+    } else {
+      delete process.env['Path'];
     }
   });
 
@@ -599,8 +607,25 @@ describe('SessionManager.resolveCLIPath', () => {
     }
   });
 
+  it('finds gsd when Windows exposes Path instead of PATH', () => {
+    delete process.env['GSD_CLI_PATH'];
+    delete process.env['PATH'];
+    const tmp = mkdtempSync(join(tmpdir(), 'gsd-cli-path-title-'));
+    try {
+      const shimName = process.platform === 'win32' ? 'gsd.cmd' : 'gsd';
+      const shimPath = join(tmp, shimName);
+      writeFileSync(shimPath, '', 'utf8');
+      process.env['Path'] = tmp;
+
+      assert.equal(SessionManager.resolveCLIPath(), resolve(shimPath));
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it('throws when GSD_CLI_PATH not set and PATH lookup fails', () => {
     delete process.env['GSD_CLI_PATH'];
+    delete process.env['Path'];
     process.env['PATH'] = '/nonexistent';
     assert.throws(
       () => SessionManager.resolveCLIPath(),
