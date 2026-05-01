@@ -344,6 +344,40 @@ describe("#4573 maybeHandleEmptyIntentTurn", () => {
     }
   });
 
+  test("single-line approval prompt with mid-line `?` and conditional intent → treated as user-handoff (regression: #5187 follow-up)", () => {
+    // Regression for the discuss-milestone case where the LLM presented a
+    // depth summary and ended with: "Did I capture that correctly? If so,
+    // say yes and I'll write requirements and the roadmap preview."
+    // The previous heuristic only checked for lines *ending* in `?`, so
+    // this single-line paragraph (terminating in `.`) bypassed the
+    // user-handoff guard, then COMMIT_INTENT_RE matched "I'll write" and
+    // the nudge auto-replied while the user was meant to approve.
+    const base = mkBase();
+    try {
+      const cap = mkCapture();
+      setPendingAutoStart(base, {
+        basePath: base,
+        milestoneId: "M001",
+        ctx: mkCtx(cap),
+        pi: mkPi(cap),
+      });
+      const handled = maybeHandleEmptyIntentTurn(
+        {
+          messages: [
+            assistantMsg(
+              "Did I capture that correctly? If so, say yes and I'll write requirements and the roadmap preview.",
+            ),
+          ],
+        },
+        false,
+      );
+      assert.equal(handled, false, "any sentence-terminating ? must defer to the user");
+      assert.equal(cap.messages.length, 0);
+    } finally {
+      clearPendingAutoStart();
+    }
+  });
+
   test('"Let me make sure" meta phrase → not flagged as commit intent (regression)', () => {
     const base = mkBase();
     try {

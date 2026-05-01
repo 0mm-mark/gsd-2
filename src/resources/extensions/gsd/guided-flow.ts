@@ -696,14 +696,14 @@ export function maybeHandleEmptyIntentTurn(
   // path, handled by maybeHandleReadyPhraseWithoutFiles.
   if (READY_PHRASE_RE.test(text)) return false;
 
-  // Skip if the LLM is clearly handing back to the user. Last-line `?` is
-  // the strongest signal, but discuss flows often end with a freeform
-  // question followed by a closing remark ("…what should we build? I'll
-  // pick one if you don't care."). Treat ANY non-empty line ending in `?`
-  // as a question-asked signal — false negatives here auto-reply to the
+  // Skip if the LLM is clearly handing back to the user. Discuss flows
+  // often pose a question and follow it with a conditional intent on the
+  // same line ("Did I capture that correctly? If so, I'll write the
+  // requirements."). A line-trailing `?` check misses these because the
+  // line ends in `.`. Match any sentence-terminating `?` (followed by
+  // whitespace or end-of-text) — false negatives here auto-reply to the
   // user, which is a much worse failure mode than a missed nudge.
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  if (lines.some((l) => l.endsWith("?"))) return false;
+  if (/\?(?:\s|$)/.test(text)) return false;
 
   // Must contain a commit-intent phrase — this is the stall we care about.
   if (!COMMIT_INTENT_RE.test(text)) return false;
