@@ -76,7 +76,7 @@ import {
   nativeMergeAbort,
 } from "./native-git-bridge.js";
 import { gsdHome } from "./gsd-home.js";
-import { type MilestoneScope } from "./workspace.js";
+import { type MilestoneScope, type GsdWorkspace, createWorkspace } from "./workspace.js";
 
 const PROJECT_PREFERENCES_FILE = "PREFERENCES.md";
 const LEGACY_PROJECT_PREFERENCES_FILE = "preferences.md";
@@ -255,8 +255,16 @@ function forceOverwriteAssessmentsWithVerdict(
 
 // ─── Module State ──────────────────────────────────────────────────────────
 
-/** Original project root before chdir into auto-worktree. */
-let originalBase: string | null = null;
+/** Active workspace registry — replaces the legacy `originalBase` singleton. */
+let activeWorkspace: GsdWorkspace | null = null;
+
+function setActiveWorkspace(ws: GsdWorkspace | null): void {
+  activeWorkspace = ws;
+}
+
+function getActiveWorkspace(): GsdWorkspace | null {
+  return activeWorkspace;
+}
 
 function clearProjectRootStateFiles(basePath: string, milestoneId: string): void {
   const gsdDir = gsdRoot(basePath);
@@ -1328,10 +1336,10 @@ export function createAutoWorktree(
 
   try {
     process.chdir(info.path);
-    originalBase = basePath;
+    setActiveWorkspace(createWorkspace(basePath));
   } catch (err) {
     // If chdir fails, the worktree was created but we couldn't enter it.
-    // Don't store originalBase -- caller can retry or clean up.
+    // Don't set activeWorkspace -- caller can retry or clean up.
     throw new GSDError(
       GSD_IO_ERROR,
       `Auto-worktree created at ${info.path} but chdir failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -1454,9 +1462,9 @@ export function teardownAutoWorktree(
   });
 
   // 3. Clear module state AFTER removeWorktree — matching mergeMilestoneToMain
-  //    order so originalBase is non-null if removeWorktree throws (worktree dir
-  //    would be orphaned on disk but originalBase still valid for recovery).
-  originalBase = null;
+  //    order so activeWorkspace is non-null if removeWorktree throws (worktree dir
+  //    would be orphaned on disk but activeWorkspace still valid for recovery).
+  setActiveWorkspace(null);
 
   // Verify cleanup succeeded — warn if the worktree directory is still on disk.
   // On Windows, bash-based cleanup can silently fail when paths contain
@@ -1496,8 +1504,9 @@ export function isInAutoWorktree(basePath: string): boolean {
   const targetPath = isGsdWorktreePath(basePath) ? basePath : process.cwd();
   if (!isGsdWorktreePath(targetPath)) return false;
 
-  const projectRoot = resolveWorktreeProjectRoot(basePath, originalBase);
-  const targetProjectRoot = resolveWorktreeProjectRoot(targetPath, originalBase);
+  const storedBase = getAutoWorktreeOriginalBase();
+  const projectRoot = resolveWorktreeProjectRoot(basePath, storedBase);
+  const targetProjectRoot = resolveWorktreeProjectRoot(targetPath, storedBase);
   if (
     normalizeWorktreePathForCompare(projectRoot) !==
     normalizeWorktreePathForCompare(targetProjectRoot)
@@ -1593,7 +1602,7 @@ export function enterAutoWorktree(
 
   try {
     process.chdir(p);
-    originalBase = basePath;
+    setActiveWorkspace(createWorkspace(basePath));
   } catch (err) {
     throw new GSDError(
       GSD_IO_ERROR,
@@ -1610,11 +1619,11 @@ export function enterAutoWorktree(
  * Returns null if not currently in an auto-worktree.
  */
 export function getAutoWorktreeOriginalBase(): string | null {
-  return originalBase;
+  return getActiveWorkspace()?.projectRoot ?? null;
 }
 
 export function _resetAutoWorktreeOriginalBaseForTests(): void {
-  originalBase = null;
+  setActiveWorkspace(null);
 }
 
 export function getActiveAutoWorktreeContext(): {
@@ -1622,7 +1631,9 @@ export function getActiveAutoWorktreeContext(): {
   worktreeName: string;
   branch: string;
 } | null {
-  if (!originalBase) return null;
+  const ws = getActiveWorkspace();
+  if (!ws) return null;
+  const originalBase = ws.projectRoot;
   const cwd = process.cwd();
   if (!isGsdWorktreePath(cwd)) return null;
   const cwdProjectRoot = resolveWorktreeProjectRoot(cwd, originalBase);
@@ -1703,11 +1714,11 @@ export function mergeMilestoneToMain(
   //    integration branch captures dirty files from OTHER milestones under a
   //    misleading commit message, contaminating the main branch (#2929).
   //
-  //    When originalBase is null (branch mode, no worktree), autoCommitDirtyState
+  //    When activeWorkspace is null (branch mode, no worktree), autoCommitDirtyState
   //    runs unconditionally — the caller is responsible for cwd placement.
   {
     let shouldAutoCommit = true;
-    if (originalBase !== null) {
+    if (getActiveWorkspace() !== null) {
       try {
         const currentBranch = nativeGetCurrentBranch(worktreeCwd);
         shouldAutoCommit = currentBranch === milestoneBranch;
@@ -2442,7 +2453,7 @@ export function mergeMilestoneToMain(
   }
 
   // 14. Clear module state
-  originalBase = null;
+  setActiveWorkspace(null);
   nudgeGitBranchCache(previousCwd);
 
   // 15. Anchor cwd at the project root on success-return. Step 12 removed
