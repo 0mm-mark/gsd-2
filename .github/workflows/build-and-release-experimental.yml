@@ -57,6 +57,6 @@ jobs:
           draft: false
           prerelease: true
           files: gsd-pi-*.tgz
-          replace: true   # updates the existing "experimental" release if it already exists
+          overwrite_files: true   # updates the existing "experimental" release if it already exists
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
