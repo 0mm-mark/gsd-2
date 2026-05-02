@@ -44,6 +44,12 @@ jobs:
       - name: Pack the package
         run: npm pack
 
+      - name: Pack as gsd-pi-experimental
+        run: |
+          npm pack
+          # Rename the generated .tgz to gsd-pi-experimental.tgz
+          cp gsd-pi-*.tgz gsd-pi-experimental.tgz
+          
       - name: Create / update GitHub Release with pre-built .tgz
         uses: softprops/action-gh-release@v2
         with:
