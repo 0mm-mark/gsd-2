@@ -180,6 +180,9 @@ interface PendingAutoStartEntry {
   // cwd-drift between discuss and checkAutoStartAfterDiscuss.
   // TODO(C3): basePath becomes redundant once all consumers migrate to scope.
   scope: MilestoneScope;
+  // H1: retry counter for Gate 1b plan-blocked recovery. Capped at
+  // MAX_PLAN_BLOCKED_RECOVERIES to prevent infinite recovery loops (#5012).
+  planBlockedRecoveryCount: number;
 }
 
 interface PendingDeepProjectSetupEntry {
@@ -196,6 +199,11 @@ interface PendingDeepProjectSetupEntry {
 // #4573: cap for how many times we nudge the LLM after a premature ready
 // phrase before giving up and asking the user to re-run /gsd.
 const MAX_READY_REJECTS = 2;
+
+// H1 (#5012): cap for Gate 1b plan-blocked recovery hints. After this many
+// consecutive recovery attempts the loop is stopped and the user is directed
+// to investigate manually.
+const MAX_PLAN_BLOCKED_RECOVERIES = 3;
 
 // #4573: matches the canonical ready phrase the discuss prompt asks the LLM
 // to emit. Accepts any M-prefixed milestone ID (three digits + optional
@@ -280,7 +288,7 @@ function clearEmptyLegacyDeepSetupPseudoMilestones(basePath: string, entries: st
 export function setPendingAutoStart(basePath: string, entry: { basePath: string; milestoneId: string; ctx?: ExtensionCommandContext; pi?: ExtensionAPI; step?: boolean; createdAt?: number }): void {
   const ws = createWorkspace(entry.basePath);
   const scope = scopeMilestone(ws, entry.milestoneId);
-  pendingAutoStartMap.set(basePath, { createdAt: Date.now(), ...entry, scope } as PendingAutoStartEntry);
+  pendingAutoStartMap.set(basePath, { createdAt: Date.now(), planBlockedRecoveryCount: 0, ...entry, scope } as PendingAutoStartEntry);
 }
 
 /**
@@ -493,10 +501,27 @@ export function checkAutoStartAfterDiscuss(): boolean {
   if (isDbAvailable()) {
     const dbRow = getMilestone(milestoneId);
     if (dbRow?.status === "queued" && contextFile) {
+      if (entry.planBlockedRecoveryCount >= MAX_PLAN_BLOCKED_RECOVERIES) {
+        // H1: recovery loop cap reached — stop triggering new turns, escalate to user.
+        logWarning(
+          "guided",
+          `Gate 1b: milestone ${milestoneId} plan-blocked recovery limit reached ` +
+          `(${entry.planBlockedRecoveryCount}/${MAX_PLAN_BLOCKED_RECOVERIES}); escalating to user`,
+        );
+        ctx.ui.notify(
+          `Milestone ${milestoneId} plan_milestone has been blocked ${entry.planBlockedRecoveryCount} times. ` +
+          `Run /gsd-debug to investigate.`,
+          "error",
+        );
+        return false;
+      }
+      // Increment counter before emitting recovery hint.
+      entry.planBlockedRecoveryCount += 1;
       logWarning(
         "guided",
         `Gate 1b: milestone ${milestoneId} queued with CONTEXT.md present — ` +
-        `plan_milestone was blocked; emitting recovery hint`,
+        `plan_milestone was blocked; emitting recovery hint ` +
+        `(attempt ${entry.planBlockedRecoveryCount}/${MAX_PLAN_BLOCKED_RECOVERIES})`,
       );
       ctx.ui.notify(
         `Milestone ${milestoneId}: context file exists but milestone is still queued. ` +
