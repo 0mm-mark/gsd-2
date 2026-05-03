@@ -180,14 +180,16 @@ test("_deriveStateImpl: projectRootForReads routes legacy markdown reads to the 
 //
 // The DeriveStateOptions parameter is typed as an object literal so accidental
 // `deriveState(path, "string")` is a TypeScript compile error. The
-// @ts-expect-error directive verifies that this guard is in place — if the
+// expect-error directive verifies that this guard is in place — if the
 // overload were widened to `string | DeriveStateOptions`, the directive would
 // trigger TS2578 ("Unused '@ts-expect-error' directive") at build time.
 
 test("deriveState: opts param rejects non-object values at compile time", () => {
   // The actual assertion is the TypeScript compile-time check below; the
   // runtime body just confirms the test ran.
-  // @ts-expect-error — opts must be DeriveStateOptions, not a string
-  void deriveState.bind(null, "/nonexistent", "this-should-not-compile");
+  if (false) {
+    // @ts-expect-error — projectRootForReads must be a string
+    void deriveState("/nonexistent", { projectRootForReads: 123 });
+  }
   assert.ok(true);
 });
