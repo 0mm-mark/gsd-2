@@ -1247,8 +1247,11 @@ export const DISPATCH_RULES: DispatchRule[] = [
           } catch (err) {
             try {
               unlinkSync(validationPath);
-            } catch {
-              // Preserve the original DB failure.
+            } catch (unlinkErr) {
+              logWarning(
+                "dispatch",
+                `failed to remove skipped validation file after DB write failure for ${mid}: ${unlinkErr instanceof Error ? unlinkErr.message : String(unlinkErr)}`,
+              );
             }
             throw err;
           }
