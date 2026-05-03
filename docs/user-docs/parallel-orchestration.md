@@ -173,7 +173,7 @@ parallel:
 
 The coordinator communicates with workers through persisted runtime commands:
 
-```
+```text
 Coordinator                    Worker
     │                            │
     ├── enqueue("pause") ─────→  │
@@ -210,7 +210,7 @@ When milestones complete, their worktree changes need to merge back to main.
 
 ### Example
 
-```
+```text
 /gsd parallel merge
 
 # Merge Results
@@ -244,7 +244,7 @@ Run `/gsd doctor --fix` to clean up automatically.
 
 Sessions are considered stale when:
 - The worker PID is no longer running (checked via `process.kill(pid, 0)`)
-- The last heartbeat is older than 30 seconds
+- The last heartbeat is older than 60 seconds
 
 The coordinator runs stale detection during `refreshWorkerStatuses()` and automatically removes dead sessions.
 
@@ -264,7 +264,7 @@ The coordinator runs stale detection during `refreshWorkerStatuses()` and automa
 
 ## File Layout
 
-```
+```text
 .gsd/
 ├── gsd.db                       # Shared runtime DB (workers, leases, dispatches, commands, runtime_kv)
 ├── gsd.db-wal                   # WAL sidecar for the shared runtime DB
@@ -277,7 +277,9 @@ The coordinator runs stale detection during `refreshWorkerStatuses()` and automa
 └── ...
 ```
 
-`gsd.db*` and `.gsd/worktrees/` are runtime artifacts and should be gitignored.
+Track `.gsd/gsd.db` in git as the stageable source of truth. `checkpointDatabase()` in [src/resources/extensions/gsd/gsd-db.ts](/Users/jeremymcspadden/.oh-my-pr/worktrees/gsd-build__gsd-2/pr-5249-37dc5b59-7d9f-4b66-ba9b-6e31abb686d9/src/resources/extensions/gsd/gsd-db.ts:1752) flushes WAL state back into that main DB file before staging.
+
+Only `.gsd/gsd.db-wal`, `.gsd/gsd.db-shm`, and `.gsd/worktrees/` are runtime artifacts that should be gitignored.
 
 ## Troubleshooting
 

@@ -3890,6 +3890,7 @@ export function clearEngineHierarchy(): void {
   transaction(() => {
     currentDb!.exec("DELETE FROM tasks");
     currentDb!.exec("DELETE FROM slices");
+    currentDb!.exec("DELETE FROM milestone_leases");
     currentDb!.exec("DELETE FROM milestones");
   });
 }
@@ -4003,6 +4004,7 @@ export function restoreManifest(manifest: StateManifest): void {
     db.exec("DELETE FROM verification_evidence");
     db.exec("DELETE FROM tasks");
     db.exec("DELETE FROM slices");
+    db.exec("DELETE FROM milestone_leases");
     db.exec("DELETE FROM milestones");
     db.exec("DELETE FROM decisions WHERE 1=1");
 
@@ -4141,6 +4143,7 @@ export function bulkInsertLegacyHierarchy(payload: {
   transaction(() => {
     db.prepare(`DELETE FROM tasks WHERE milestone_id IN (${placeholders})`).run(...clearMilestoneIds);
     db.prepare(`DELETE FROM slices WHERE milestone_id IN (${placeholders})`).run(...clearMilestoneIds);
+    db.prepare(`DELETE FROM milestone_leases WHERE milestone_id IN (${placeholders})`).run(...clearMilestoneIds);
     db.prepare(`DELETE FROM milestones WHERE id IN (${placeholders})`).run(...clearMilestoneIds);
 
     const insertMilestone = db.prepare(

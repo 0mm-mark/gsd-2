@@ -172,10 +172,12 @@ function openDispatchClaim(
   const mid = iterData.mid;
   if (!mid) return { kind: "degraded" };
 
+  const recent = getRecentDispatchesForUnit(iterData.unitId, 1);
+  const attemptN = (recent[0]?.attempt_n ?? 0) + 1;
+
+  let claim: ReturnType<typeof recordDispatchClaim>;
   try {
-    const recent = getRecentDispatchesForUnit(iterData.unitId, 1);
-    const attemptN = (recent[0]?.attempt_n ?? 0) + 1;
-    const claim = recordDispatchClaim({
+    claim = recordDispatchClaim({
       traceId: flowId,
       turnId,
       workerId: s.workerId,
@@ -187,21 +189,6 @@ function openDispatchClaim(
       unitId: iterData.unitId,
       attemptN,
     });
-    if (!claim.ok) {
-      debugLog("autoLoop", {
-        phase: "dispatch-claim-rejected",
-        unitId: iterData.unitId,
-        existingId: claim.existingId,
-        existingWorker: claim.existingWorker,
-      });
-      return {
-        kind: "already-active",
-        existingId: claim.existingId,
-        existingWorker: claim.existingWorker,
-      };
-    }
-    markDispatchRunning(claim.dispatchId);
-    return { kind: "claimed", dispatchId: claim.dispatchId };
   } catch (err) {
     debugLog("autoLoop", {
       phase: "dispatch-claim-failed",
@@ -209,6 +196,31 @@ function openDispatchClaim(
     });
     return { kind: "degraded" };
   }
+
+  if (!claim.ok) {
+    debugLog("autoLoop", {
+      phase: "dispatch-claim-rejected",
+      unitId: iterData.unitId,
+      existingId: claim.existingId,
+      existingWorker: claim.existingWorker,
+    });
+    return {
+      kind: "already-active",
+      existingId: claim.existingId,
+      existingWorker: claim.existingWorker,
+    };
+  }
+
+  try {
+    markDispatchRunning(claim.dispatchId);
+  } catch (err) {
+    debugLog("autoLoop", {
+      phase: "mark-running-failed",
+      dispatchId: claim.dispatchId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+  return { kind: "claimed", dispatchId: claim.dispatchId };
 }
 
 // ── Memory pressure monitoring (#3331) ──────────────────────────────────
