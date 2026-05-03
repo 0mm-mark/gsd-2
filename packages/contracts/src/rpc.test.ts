@@ -11,6 +11,7 @@ import {
 	RPC_V2_EVENT_TYPES,
 	type McpPendingBlocker,
 } from "./rpc.js";
+import { WORKFLOW_TOOL_CONTRACTS, WORKFLOW_TOOL_NAMES } from "./workflow.js";
 
 test("rpc contract version is stable and public", () => {
 	assert.equal(RPC_CONTRACT_VERSION, 1);
@@ -56,4 +57,16 @@ test("mcp pending blocker preserves secure input payloads", () => {
 	assert.equal(blocker.method, "input");
 	assert.equal(blocker.event.method, "input");
 	assert.equal(blocker.event.secure, true);
+});
+
+test("workflow tool contracts expose canonical names and aliases", () => {
+	assert.ok(WORKFLOW_TOOL_NAMES.includes("gsd_task_complete"));
+	assert.ok(WORKFLOW_TOOL_NAMES.includes("gsd_complete_task"));
+	assert.ok(WORKFLOW_TOOL_NAMES.includes("gsd_plan_milestone"));
+
+	const taskComplete = WORKFLOW_TOOL_CONTRACTS.find((tool) => tool.canonicalName === "gsd_task_complete");
+	assert.ok(taskComplete);
+	assert.deepEqual([...taskComplete.aliases], ["gsd_complete_task"]);
+	assert.equal(taskComplete.writePolicy, "write");
+	assert.equal(taskComplete.schemaId, "workflow.task.complete");
 });
