@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 const baselineModule = await import("../../scripts/refactor-baseline.mjs");
@@ -13,11 +13,13 @@ const {
   BASELINE_REQUIRED_METRICS,
   buildMetricIndex,
   collectBaseline,
+  collectContractsMetrics,
   collectDirectoryMetrics,
   collectPromptMetrics,
   compareReports,
   formatDelta,
   formatDeltaPercent,
+  countMatches,
   metricSafeLabel,
   parseArgs,
   parseCommandSpec,
@@ -85,6 +87,8 @@ test("collectBaseline returns the phase-zero report shape", async () => {
   await writeFile(join(root, "CONTRIBUTING.md"), "# Contributing\n");
   await writeFile(join(root, "VISION.md"), "# Vision\n");
   await writeFile(join(root, "src/resources/extensions/gsd/prompts/system.md"), "System prompt\n");
+  await writeContractsSurfaceFixtures(root);
+  await writeFile(join(root, "src/tests/fixtures/contracts-golden-fixtures.ts"), "export const fixtures = [];\n");
   await mkdir(join(root, "dist-test"), { recursive: true });
   await writeFile(join(root, "dist-test/example.js"), "console.log('ok')\n");
 
@@ -96,6 +100,8 @@ test("collectBaseline returns the phase-zero report shape", async () => {
   assert.equal(report.context.fileCount, 2);
   assert.equal(report.distTest.exists, true);
   assert.equal(report.distTest.fileCount, 1);
+  assert.equal(report.contracts.fixtures.total, 1);
+  assert.equal(report.metrics["contracts.fixtures.sharedBySurface"], 5);
   assert.equal(report.commands.length, 0);
   for (const metricName of BASELINE_REQUIRED_METRICS) {
     assert.equal(typeof report.metrics[metricName], "number", `${metricName} should be indexed as a number`);
@@ -109,6 +115,11 @@ test("buildMetricIndex includes workspace and command metrics", () => {
     prompt: { fileCount: 1, totalChars: 2, totalBytes: 3, totalLines: 4 },
     context: { fileCount: 5, totalChars: 6, totalBytes: 7, totalLines: 8 },
     distTest: { exists: true, fileCount: 9, bytes: 10 },
+    contracts: {
+      fixtures: { total: 16, sharedBySurface: 4 },
+      surfaceDriftFailures: 1,
+      legacyTypeImportsRemaining: 2,
+    },
     workspace: {
       areas: [
         { area: "src", exists: true, fileCount: 11, bytes: 12 },
@@ -120,8 +131,27 @@ test("buildMetricIndex includes workspace and command metrics", () => {
   });
 
   assert.equal(metrics["distTest.exists"], 1);
+  assert.equal(metrics["contracts.fixtures.total"], 16);
+  assert.equal(metrics["contracts.surfaceDriftFailures"], 1);
   assert.equal(metrics["workspace.src.fileCount"], 11);
   assert.equal(metrics["command.test-compile.wallMs"], 13);
+});
+
+test("collectContractsMetrics reports fixture coverage and surface drift", async () => {
+  const root = await makeFixtureRoot();
+  await writeContractsSurfaceFixtures(root);
+  await writeFile(
+    join(root, "src/tests/fixtures/contracts-golden-fixtures.ts"),
+    "export const fixtures = [];\n",
+  );
+
+  const metrics = await collectContractsMetrics(root);
+
+  assert.equal(metrics.fixtures.total, 1);
+  assert.deepEqual(metrics.fixtures.files, ["src/tests/fixtures/contracts-golden-fixtures.ts"]);
+  assert.equal(metrics.fixtures.sharedBySurface, 5);
+  assert.equal(metrics.surfaceDriftFailures, 0);
+  assert.equal(metrics.legacyTypeImportsRemaining, 0);
 });
 
 test("compareReports computes scalar metric deltas", () => {
@@ -171,6 +201,11 @@ test("metricSafeLabel normalizes arbitrary command labels", () => {
   assert.equal(metricSafeLabel(""), "command");
 });
 
+test("countMatches counts non-overlapping pattern matches", () => {
+  assert.equal(countMatches("one two one", /one/g), 2);
+  assert.equal(countMatches("none", /missing/g), 0);
+});
+
 test("renderSummary includes key sections for human inspection", async () => {
   const root = await makeFixtureRoot();
   await writeFile(join(root, "src/resources/extensions/gsd/prompts/system.md"), "System prompt\n");
@@ -182,6 +217,7 @@ test("renderSummary includes key sections for human inspection", async () => {
   assert.match(summary, /Schema version: 1/);
   assert.match(summary, /Prompt metrics/);
   assert.match(summary, /dist-test metrics/);
+  assert.match(summary, /Contracts metrics/);
   assert.match(summary, /Largest prompt files/);
 });
 
@@ -212,5 +248,20 @@ test("writeJsonFile creates parent directories and writes parseable JSON", async
 async function makeFixtureRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "gsd-refactor-baseline-"));
   await mkdir(join(root, "src/resources/extensions/gsd/prompts"), { recursive: true });
+  await mkdir(join(root, "src/tests/fixtures"), { recursive: true });
   return root;
+}
+
+async function writeContractsSurfaceFixtures(root: string): Promise<void> {
+  const files = [
+    "packages/pi-coding-agent/src/modes/rpc/rpc-types.ts",
+    "packages/rpc-client/src/rpc-types.ts",
+    "packages/mcp-server/src/types.ts",
+    "src/web/bridge-service.ts",
+    "vscode-extension/src/gsd-client.ts",
+  ];
+  for (const file of files) {
+    await mkdir(dirname(join(root, file)), { recursive: true });
+    await writeFile(join(root, file), 'import type { RpcCommand } from "@gsd-build/contracts";\n');
+  }
 }

@@ -25,6 +25,29 @@ const DEFAULT_CONTEXT_FILES = [
   "docs/dev/2026-05-03-long-running-refactor-plan-of-plans.md",
 ];
 
+const CONTRACT_SURFACES = [
+  {
+    surface: "runtime",
+    path: "packages/pi-coding-agent/src/modes/rpc/rpc-types.ts",
+  },
+  {
+    surface: "rpcClient",
+    path: "packages/rpc-client/src/rpc-types.ts",
+  },
+  {
+    surface: "mcp",
+    path: "packages/mcp-server/src/types.ts",
+  },
+  {
+    surface: "web",
+    path: "src/web/bridge-service.ts",
+  },
+  {
+    surface: "vscode",
+    path: "vscode-extension/src/gsd-client.ts",
+  },
+];
+
 const SKIP_DIRS = new Set([
   ".git",
   ".next",
@@ -49,6 +72,10 @@ export const BASELINE_REQUIRED_METRICS = [
   "distTest.exists",
   "distTest.fileCount",
   "distTest.bytes",
+  "contracts.fixtures.total",
+  "contracts.fixtures.sharedBySurface",
+  "contracts.surfaceDriftFailures",
+  "contracts.legacyTypeImportsRemaining",
 ];
 
 export function parseArgs(argv = process.argv.slice(2)) {
@@ -108,11 +135,13 @@ export async function collectBaseline(root, commandSpecs = []) {
     contextMetrics,
     distTestMetrics,
     workspaceMetrics,
+    contractsMetrics,
   ] = await Promise.all([
     collectPromptMetrics(root),
     collectContextMetrics(root),
     collectDirectoryMetrics(join(root, "dist-test")),
     collectWorkspaceMetrics(root),
+    collectContractsMetrics(root),
   ]);
 
   const commandTimings = [];
@@ -131,6 +160,7 @@ export async function collectBaseline(root, commandSpecs = []) {
     context: contextMetrics,
     distTest: distTestMetrics,
     workspace: workspaceMetrics,
+    contracts: contractsMetrics,
     commands: commandTimings,
     startup: {
       timingEnv: "GSD_STARTUP_TIMING=1",
@@ -207,6 +237,47 @@ export async function collectWorkspaceMetrics(root) {
   return { areas };
 }
 
+export async function collectContractsMetrics(root) {
+  const surfaces = [];
+  for (const surface of CONTRACT_SURFACES) {
+    const abs = join(root, surface.path);
+    if (!existsSync(abs)) {
+      surfaces.push({
+        ...surface,
+        exists: false,
+        usesSharedContracts: false,
+        legacyTypeImports: 0,
+      });
+      continue;
+    }
+
+    const content = await readFile(abs, "utf8");
+    surfaces.push({
+      ...surface,
+      exists: true,
+      usesSharedContracts: content.includes("@gsd-build/contracts"),
+      legacyTypeImports: countMatches(
+        content,
+        /(?:packages\/pi-coding-agent\/src\/modes\/rpc\/rpc-types|src\/modes\/rpc\/rpc-types|from ["']@gsd-build\/rpc-client["'])/g,
+      ),
+    });
+  }
+
+  const fixtureFiles = await collectFiles(join(root, "src/tests/fixtures"), file => file.endsWith("-fixtures.ts"));
+  const sharedBySurface = surfaces.filter(surface => surface.usesSharedContracts).length;
+  const legacyTypeImportsRemaining = sum(surfaces, "legacyTypeImports");
+  return {
+    fixtures: {
+      total: fixtureFiles.length,
+      files: fixtureFiles.map(file => normalizePath(relative(root, file))).sort(),
+      sharedBySurface,
+    },
+    surfaces,
+    surfaceDriftFailures: surfaces.filter(surface => surface.exists && !surface.usesSharedContracts).length,
+    legacyTypeImportsRemaining,
+  };
+}
+
 export async function collectDirectoryMetrics(dir) {
   if (!existsSync(dir)) {
     return {
@@ -279,6 +350,10 @@ export function buildMetricIndex(report) {
     "distTest.exists": report.distTest.exists ? 1 : 0,
     "distTest.fileCount": report.distTest.fileCount,
     "distTest.bytes": report.distTest.bytes,
+    "contracts.fixtures.total": report.contracts?.fixtures?.total ?? 0,
+    "contracts.fixtures.sharedBySurface": report.contracts?.fixtures?.sharedBySurface ?? 0,
+    "contracts.surfaceDriftFailures": report.contracts?.surfaceDriftFailures ?? 0,
+    "contracts.legacyTypeImportsRemaining": report.contracts?.legacyTypeImportsRemaining ?? 0,
   };
 
   for (const area of report.workspace.areas) {
@@ -352,6 +427,10 @@ export function numberOrNull(value) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+export function countMatches(value, pattern) {
+  return Array.from(value.matchAll(pattern)).length;
+}
+
 export function metricSafeLabel(label) {
   return label
     .trim()
@@ -414,6 +493,12 @@ export function renderSummary(report) {
     `- exists: ${report.distTest.exists}`,
     `- files: ${report.distTest.fileCount}`,
     `- bytes: ${report.distTest.bytes}`,
+    "",
+    "Contracts metrics",
+    `- fixtures: ${report.contracts.fixtures.total}`,
+    `- shared surfaces: ${report.contracts.fixtures.sharedBySurface}/${report.contracts.surfaces.length}`,
+    `- drift failures: ${report.contracts.surfaceDriftFailures}`,
+    `- legacy type imports remaining: ${report.contracts.legacyTypeImportsRemaining}`,
   ];
 
   if (report.commands.length > 0) {
