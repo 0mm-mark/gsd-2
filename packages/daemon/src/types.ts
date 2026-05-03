@@ -1,5 +1,5 @@
-import type { RpcClient, SdkAgentEvent } from '@gsd-build/rpc-client';
-import type { McpPendingBlocker as PendingBlocker } from '@gsd-build/contracts';
+import type { RpcClient } from '@gsd-build/rpc-client';
+import type { McpPendingBlocker as PendingBlocker, SdkAgentEvent } from '@gsd-build/contracts';
 
 /**
  * Log severity levels, ordered from most to least verbose.
