@@ -1,28 +1,13 @@
 import { ChildProcess, spawn } from "node:child_process";
 import * as vscode from "vscode";
+import type { RpcSessionState, ThinkingLevel } from "@gsd-build/contracts" with { "resolution-mode": "import" };
 
 /**
  * Mirrors the RPC command/response protocol from the GSD agent.
- * These types are intentionally kept minimal and self-contained so the
- * extension has no dependency on the agent packages at runtime.
+ * Extension-only result shapes stay local; shared RPC state comes from
+ * @gsd-build/contracts.
  */
-
-export type ThinkingLevel = "off" | "low" | "medium" | "high";
-
-export interface RpcSessionState {
-	model?: { provider: string; id: string; contextWindow?: number };
-	thinkingLevel: ThinkingLevel;
-	isStreaming: boolean;
-	isCompacting: boolean;
-	steeringMode: "all" | "one-at-a-time";
-	followUpMode: "all" | "one-at-a-time";
-	sessionFile?: string;
-	sessionId: string;
-	sessionName?: string;
-	autoCompactionEnabled: boolean;
-	messageCount: number;
-	pendingMessageCount: number;
-}
+export type { ThinkingLevel };
 
 export interface ModelInfo {
 	provider: string;
