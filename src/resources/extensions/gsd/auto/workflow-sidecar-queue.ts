@@ -3,7 +3,7 @@
 
 import type { SidecarItem } from "./session.js";
 
-export interface SidecarDequeuePayload {
+export interface SidecarDequeuePayload extends Record<string, unknown> {
   kind: SidecarItem["kind"];
   unitType: string;
   unitId: string;

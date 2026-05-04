@@ -433,10 +433,9 @@ export async function autoLoop(
 
         debugLog("autoLoop", { phase: "custom-engine-dispatch", iteration });
         const dispatch = await engine.resolveDispatch(engineState, { basePath: s.basePath });
-        const engineDispatchDecision = decideEngineDispatch({
-          action: dispatch.action,
-          reason: dispatch.reason,
-        });
+        const engineDispatchDecision = decideEngineDispatch(dispatch.action === "stop"
+          ? { action: "stop", reason: dispatch.reason }
+          : { action: dispatch.action });
         const dispatchFlow = await handleCustomEngineDispatchOutcome({
           decision: engineDispatchDecision,
           deps: {
@@ -449,7 +448,10 @@ export async function autoLoop(
         }
 
         // dispatch.action === "dispatch"
-        const step = dispatch.step!;
+        if (dispatch.action !== "dispatch") {
+          continue;
+        }
+        const step = dispatch.step;
         iterData = await buildCustomEngineIterationData({
           step,
           basePath: s.basePath,
