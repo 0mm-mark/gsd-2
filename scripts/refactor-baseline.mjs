@@ -85,6 +85,12 @@ export const BASELINE_REQUIRED_METRICS = [
   "process.prBodiesMissingTests",
   "process.docsConflictCount",
   "process.shipPathCount",
+  "legacy.markdownFallbackUsed",
+  "legacy.workflowEngineUsed",
+  "legacy.uokFallbackUsed",
+  "legacy.mcpAliasUsed",
+  "legacy.componentFormatUsed",
+  "legacy.providerDefaultUsed",
 ];
 
 export function parseArgs(argv = process.argv.slice(2)) {
@@ -176,6 +182,14 @@ export async function collectBaseline(root, commandSpecs = []) {
     contracts: contractsMetrics,
     testCompile: testCompileMetrics,
     process: processMetrics,
+    legacy: {
+      markdownFallbackUsed: 0,
+      workflowEngineUsed: 0,
+      uokFallbackUsed: 0,
+      mcpAliasUsed: 0,
+      componentFormatUsed: 0,
+      providerDefaultUsed: 0,
+    },
     commands: commandTimings,
     startup: {
       timingEnv: "GSD_STARTUP_TIMING=1",
@@ -464,6 +478,12 @@ export function buildMetricIndex(report) {
     "process.prBodiesMissingTests": report.process?.prBodiesMissingTests ?? 0,
     "process.docsConflictCount": report.process?.docsConflictCount ?? 0,
     "process.shipPathCount": report.process?.shipPathCount ?? 0,
+    "legacy.markdownFallbackUsed": report.legacy?.markdownFallbackUsed ?? 0,
+    "legacy.workflowEngineUsed": report.legacy?.workflowEngineUsed ?? 0,
+    "legacy.uokFallbackUsed": report.legacy?.uokFallbackUsed ?? 0,
+    "legacy.mcpAliasUsed": report.legacy?.mcpAliasUsed ?? 0,
+    "legacy.componentFormatUsed": report.legacy?.componentFormatUsed ?? 0,
+    "legacy.providerDefaultUsed": report.legacy?.providerDefaultUsed ?? 0,
   };
 
   for (const area of report.workspace.areas) {
@@ -663,6 +683,14 @@ export function renderSummary(report) {
     `- PR bodies missing tests: ${report.process?.prBodiesMissingTests ?? 0}`,
     `- docs conflicts: ${report.process?.docsConflictCount ?? 0}`,
     `- shipping paths: ${report.process?.shipPathCount ?? 0}`,
+    "",
+    "Legacy metrics",
+    `- markdown fallback used: ${report.legacy?.markdownFallbackUsed ?? 0}`,
+    `- workflow engine used: ${report.legacy?.workflowEngineUsed ?? 0}`,
+    `- UOK fallback used: ${report.legacy?.uokFallbackUsed ?? 0}`,
+    `- MCP alias used: ${report.legacy?.mcpAliasUsed ?? 0}`,
+    `- component format used: ${report.legacy?.componentFormatUsed ?? 0}`,
+    `- provider default used: ${report.legacy?.providerDefaultUsed ?? 0}`,
   ];
 
   if (report.commands.length > 0) {

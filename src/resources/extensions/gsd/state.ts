@@ -48,6 +48,7 @@ import { logWarning } from './workflow-logger.js';
 import { extractVerdict } from './verdict-parser.js';
 import { detectPendingEscalation } from './escalation.js';
 import { isTerminalMilestoneSummaryContent } from './milestone-summary-classifier.js';
+import { incrementLegacyTelemetry } from './legacy-telemetry.js';
 
 import {
   isDbAvailable,
@@ -332,6 +333,7 @@ export async function deriveState(
     }
     result = await _deriveStateImpl(basePath, opts);
     _telemetry.markdownDeriveCount++;
+    incrementLegacyTelemetry("legacy.markdownFallbackUsed");
   } else {
     if (wasDbOpenAttempted()) {
       logWarning("state", "DB unavailable — refusing implicit markdown state derivation");

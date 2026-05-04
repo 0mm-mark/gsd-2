@@ -117,6 +117,12 @@ test("collectBaseline returns the phase-zero report shape", async () => {
   assert.equal(report.metrics["process.prBodiesMissingTests"], 0);
   assert.equal(report.metrics["process.docsConflictCount"], 0);
   assert.equal(report.metrics["process.shipPathCount"], 3);
+  assert.equal(report.metrics["legacy.markdownFallbackUsed"], 0);
+  assert.equal(report.metrics["legacy.workflowEngineUsed"], 0);
+  assert.equal(report.metrics["legacy.uokFallbackUsed"], 0);
+  assert.equal(report.metrics["legacy.mcpAliasUsed"], 0);
+  assert.equal(report.metrics["legacy.componentFormatUsed"], 0);
+  assert.equal(report.metrics["legacy.providerDefaultUsed"], 0);
   assert.equal(report.commands.length, 0);
   for (const metricName of BASELINE_REQUIRED_METRICS) {
     assert.equal(typeof report.metrics[metricName], "number", `${metricName} should be indexed as a number`);
@@ -150,6 +156,14 @@ test("buildMetricIndex includes workspace and command metrics", () => {
       docsConflictCount: 0,
       shipPathCount: 3,
     },
+    legacy: {
+      markdownFallbackUsed: 1,
+      workflowEngineUsed: 2,
+      uokFallbackUsed: 3,
+      mcpAliasUsed: 4,
+      componentFormatUsed: 5,
+      providerDefaultUsed: 6,
+    },
     workspace: {
       areas: [
         { area: "src", exists: true, fileCount: 11, bytes: 12 },
@@ -171,6 +185,12 @@ test("buildMetricIndex includes workspace and command metrics", () => {
   assert.equal(metrics["testCompile.fileCount"], 17);
   assert.equal(metrics["process.prGeneratorConsumers"], 3);
   assert.equal(metrics["process.shipPathCount"], 3);
+  assert.equal(metrics["legacy.markdownFallbackUsed"], 1);
+  assert.equal(metrics["legacy.workflowEngineUsed"], 2);
+  assert.equal(metrics["legacy.uokFallbackUsed"], 3);
+  assert.equal(metrics["legacy.mcpAliasUsed"], 4);
+  assert.equal(metrics["legacy.componentFormatUsed"], 5);
+  assert.equal(metrics["legacy.providerDefaultUsed"], 6);
   assert.equal(metrics["command.test-compile.wallMs"], 13);
   assert.equal(metrics["verify.changedWallMs"], 21);
   assert.equal(metrics["verify.fullWallMs"], 24);
@@ -343,6 +363,7 @@ test("renderSummary includes key sections for human inspection", async () => {
   assert.match(summary, /Test compile metrics/);
   assert.match(summary, /Contracts metrics/);
   assert.match(summary, /Process metrics/);
+  assert.match(summary, /Legacy metrics/);
   assert.match(summary, /Largest prompt files/);
 });
 
