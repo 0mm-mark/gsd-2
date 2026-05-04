@@ -201,6 +201,10 @@ export async function executeSummarySave(
           error: String(err),
           stack: err instanceof Error ? err.stack ?? "" : "",
         });
+        // PROJECT.md was persisted by saveArtifactToDb above; the artifacts row
+        // changed even though no milestones registered. Invalidate so subsequent
+        // /gsd reads see the persisted artifact instead of the pre-save cache.
+        invalidateStateCache();
         return {
           content: [{
             type: "text",
@@ -223,6 +227,9 @@ export async function executeSummarySave(
         logError("tool", `gsd_summary_save: PROJECT.md saved to ${relativePath} but parsed zero milestones — registration produced no DB rows`, {
           tool: "gsd_summary_save",
         });
+        // PROJECT.md was persisted; invalidate so subsequent reads see the new
+        // artifacts row even though no milestones registered.
+        invalidateStateCache();
         return {
           content: [{
             type: "text",

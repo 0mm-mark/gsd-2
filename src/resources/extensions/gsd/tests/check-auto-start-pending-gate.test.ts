@@ -164,7 +164,12 @@ describe("checkAutoStartAfterDiscuss Gate 1a (pending depth-verification gate)",
   test("Gate 1a does NOT trip when the pending gate is for a DIFFERENT milestone", () => {
     base = mkBase();
     openDatabase(":memory:");
-    insertMilestone({ id: "M001", title: "Pending Gate Test", status: "active" });
+    // status: "queued" so that Gate 1b downstream of Gate 1a fires its
+    // recovery notify ("context file exists but milestone is still queued") —
+    // observing that notify proves we advanced past Gate 1a. If Gate 1a
+    // wrongly tripped on the M999 gate it would `return false` immediately
+    // and Gate 1b would never run, so the notify would be absent.
+    insertMilestone({ id: "M001", title: "Pending Gate Test", status: "queued" });
 
     cap = mkCapture();
     setPendingAutoStart(base, {
@@ -174,23 +179,25 @@ describe("checkAutoStartAfterDiscuss Gate 1a (pending depth-verification gate)",
       pi: mkPi(cap),
     });
 
-    // Pending gate is for a totally different milestone — Gate 1a must not block.
     setPendingGate("depth_verification_M999_confirm", base);
 
-    // We do not assert true/false here — Gate 1b or downstream gates may still
-    // legitimately return false. The point is that Gate 1a alone must not trip,
-    // i.e. the pending-gate notification path is not entered. We assert this by
-    // confirming no Gate-1a related state was triggered: the test passes simply
-    // by virtue of checkAutoStartAfterDiscuss not throwing and the function
-    // proceeding past Gate 1a (verified by reaching Gate 1b which would
-    // normally emit a recovery message — but with status=active it does not).
-    // The pendingAutoStart entry will still be present (only the success path
-    // deletes it), and that is fine.
     const result = checkAutoStartAfterDiscuss();
-    // Either result is acceptable; what we assert is that NO crash occurred and
-    // the function completed. We additionally assert that if false, it was not
-    // due to a "pending gate for M001" path — there is no observable error
-    // notify about M001 gate.
-    assert.equal(typeof result, "boolean", "function must return a boolean");
+    assert.equal(result, false, "Gate 1b returns false (expected) — but only if Gate 1a let us through");
+
+    // Positive proof we passed Gate 1a: Gate 1b emitted its recovery notify
+    // about M001 (not M999 — the pending-gate milestone is irrelevant here).
+    const gate1bNotify = cap.notifies.find(n =>
+      n.level === "warning" && /M001.*context file exists but milestone is still queued/i.test(n.msg)
+    );
+    assert.ok(
+      gate1bNotify,
+      `expected Gate 1b warning notify about M001; got: ${JSON.stringify(cap.notifies)}`,
+    );
+
+    // Negative proof: no Gate 1a notification path exists in source today, but
+    // also assert no notify mentions M999 (the pending-gate milestone) — that
+    // would suggest Gate 1a is leaking the wrong milestone into messaging.
+    const m999Notify = cap.notifies.find(n => /M999/i.test(n.msg));
+    assert.equal(m999Notify, undefined, "no notify should reference M999 (the pending-gate milestone)");
   });
 });

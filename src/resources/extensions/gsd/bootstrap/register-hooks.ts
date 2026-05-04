@@ -426,7 +426,7 @@ export function registerHooks(
     // When /gsd queue is active, the agent should only create milestones,
     // not execute work. Block write/edit to non-.gsd/ paths and bash commands
     // that would modify files.
-    if (isQueuePhaseActive()) {
+    if (isQueuePhaseActive(discussionBasePath)) {
       let queueInput = "";
       if (isToolCallEventType("write", event)) {
         queueInput = event.input.path;
@@ -571,7 +571,7 @@ export function registerHooks(
     // If the user responded at all (even "needs adjustment"), clear the pending gate
     // because the user engaged — the prompt handles the re-ask-after-adjustment flow.
     const questions: any[] = (event.input as any)?.questions ?? [];
-    const currentPendingGate = getPendingGate();
+    const currentPendingGate = getPendingGate(basePath);
     if (currentPendingGate) {
       if (details?.cancelled || !details?.response) {
         // Gate stays pending. Direct the agent to the most reliable recovery
