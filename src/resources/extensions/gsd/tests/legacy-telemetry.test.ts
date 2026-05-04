@@ -3,11 +3,12 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import {
+  getLegacyTelemetryReport,
   getLegacyTelemetry,
   incrementLegacyTelemetry,
   listLegacyTelemetryCounters,
@@ -60,6 +61,32 @@ test("legacy telemetry emits one actionable diagnostic per counter", () => {
     _resetLogs();
     resetLegacyTelemetry();
     setStderrLoggingEnabled(previousStderr);
+  }
+});
+
+test("legacy telemetry can persist an opt-in snapshot file", () => {
+  const previousStderr = setStderrLoggingEnabled(false);
+  const previousOutput = process.env.GSD_LEGACY_TELEMETRY_FILE;
+  const base = mkdtempSync(join(tmpdir(), "gsd-legacy-telemetry-file-"));
+  const outputPath = join(base, "runtime", "legacy-telemetry.json");
+  try {
+    resetLegacyTelemetry();
+    _resetLogs();
+    process.env.GSD_LEGACY_TELEMETRY_FILE = outputPath;
+
+    incrementLegacyTelemetry("legacy.providerDefaultUsed", 2);
+
+    const report = JSON.parse(readFileSync(outputPath, "utf-8")) as ReturnType<typeof getLegacyTelemetryReport>;
+    assert.equal(typeof report.ts, "string");
+    assert.equal(report.counters["legacy.providerDefaultUsed"], 2);
+    assert.equal(report.counters["legacy.markdownFallbackUsed"], 0);
+  } finally {
+    if (previousOutput === undefined) delete process.env.GSD_LEGACY_TELEMETRY_FILE;
+    else process.env.GSD_LEGACY_TELEMETRY_FILE = previousOutput;
+    _resetLogs();
+    resetLegacyTelemetry();
+    setStderrLoggingEnabled(previousStderr);
+    rmSync(base, { recursive: true, force: true });
   }
 });
 

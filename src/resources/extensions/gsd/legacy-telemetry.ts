@@ -1,6 +1,9 @@
 // Project/App: GSD-2
 // File Purpose: Runtime counters for telemetry-gated legacy compatibility paths.
 
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+
 import { logWarning } from "./workflow-logger.js";
 
 export type LegacyTelemetryCounter =
@@ -12,6 +15,11 @@ export type LegacyTelemetryCounter =
   | "legacy.providerDefaultUsed";
 
 export type LegacyTelemetrySnapshot = Record<LegacyTelemetryCounter, number>;
+
+export interface LegacyTelemetryReport {
+  ts: string;
+  counters: LegacyTelemetrySnapshot;
+}
 
 const COUNTERS: LegacyTelemetryCounter[] = [
   "legacy.markdownFallbackUsed",
@@ -41,6 +49,7 @@ export function incrementLegacyTelemetry(counter: LegacyTelemetryCounter, amount
   if (!Number.isFinite(amount) || amount <= 0) return;
   values[counter] += amount;
   emitLegacyDiagnostic(counter);
+  persistLegacyTelemetry();
 }
 
 export function getLegacyTelemetry(): LegacyTelemetrySnapshot {
@@ -58,8 +67,27 @@ export function listLegacyTelemetryCounters(): LegacyTelemetryCounter[] {
   return [...COUNTERS];
 }
 
+export function getLegacyTelemetryReport(): LegacyTelemetryReport {
+  return {
+    ts: new Date().toISOString(),
+    counters: getLegacyTelemetry(),
+  };
+}
+
 function emitLegacyDiagnostic(counter: LegacyTelemetryCounter): void {
   if (warnedCounters.has(counter)) return;
   warnedCounters.add(counter);
   logWarning("migration", DIAGNOSTICS[counter], { counter });
+}
+
+function persistLegacyTelemetry(): void {
+  const outputPath = process.env.GSD_LEGACY_TELEMETRY_FILE?.trim();
+  if (!outputPath) return;
+
+  try {
+    mkdirSync(dirname(outputPath), { recursive: true });
+    writeFileSync(outputPath, `${JSON.stringify(getLegacyTelemetryReport(), null, 2)}\n`, "utf-8");
+  } catch {
+    // Legacy cleanup telemetry must never block runtime paths.
+  }
 }
