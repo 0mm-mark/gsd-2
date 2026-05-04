@@ -20,7 +20,7 @@ Plan this slice against real code and persist it through the DB-backed tool.
 
 Use `subagent` only under `planning-dispatch` for isolated planning reconnaissance: broad subsystem scouting, unclear decomposition, or current external facts. For external research, dispatch the **scout** agent. Do not dispatch implementation agents.
 
-Before planning, validate roadmap assumptions against code and dependency summaries. If concrete evidence shows downstream slices are wrong, call `gsd_reassess_roadmap`; otherwise keep the roadmap unchanged. Bias toward "roadmap is fine." Completed slices are immutable.
+Before planning, validate roadmap assumptions against code and dependency summaries. If concrete evidence shows downstream slices are wrong, call `gsd_reassess_roadmap` with `sliceChanges.modified`, `sliceChanges.added`, or `sliceChanges.removed`; otherwise keep the roadmap unchanged. Bias toward "roadmap is fine." Completed slices are immutable.
 
 ### Source Files
 
@@ -36,7 +36,7 @@ If slice research is inlined, trust it. Explore enough code to confirm paths, bo
 2. Call `memory_query` with keywords from the slice title and source files.
 3. Read `{{planTemplatePath}}` and `{{taskPlanTemplatePath}}`.
 4. {{skillActivation}} Record expected executor skills in each task plan's `skills_used` frontmatter.
-5. Define slice verification before tasks. Non-trivial slices need real tests or executable assertions; boundary contracts need contract-exercising checks. Tests must not read ignored paths such as `.gsd/`, `.planning/`, or `.audits/`.
+5. Define slice verification before tasks. Non-trivial slices need real tests or executable assertions; boundary contracts need contract-exercising checks. Tests must not read .gitignore/gitignored paths such as `.gsd/`, `.planning/`, or `.audits/`.
 6. Include Threat Surface (Q3), Requirement Impact (Q4), proof level, observability, integration closure, Failure Modes (Q5), Load Profile (Q6), and Negative Tests (Q7) only where applicable.
 7. Right-size tasks. Simple slices can be one task; split only when context, ownership, or verification boundaries justify it.
 8. Each task needs a concrete title, Why / Files / Do / Verify / Done when, plus task-plan description, steps, must-haves, verification, inputs, and expected output. Inputs and Expected Output must include concrete backtick-wrapped paths; each task needs at least one output path.
@@ -47,7 +47,7 @@ If slice research is inlined, trust it. Explore enough code to confirm paths, bo
 
 The slice directory already exists. Do not mkdir.
 
-**Autonomous execution:** do not call `ask_user_questions` or `secure_env_collect`; make reasonable assumptions and document them.
+**Autonomous execution:** no human is available. Do not call `ask_user_questions` or `secure_env_collect`; make reasonable assumptions and document them.
 
 **You MUST call `gsd_plan_slice` to persist planning state before finishing.**
 

@@ -22,8 +22,8 @@ Use `subagent` only for fresh-context review when useful: reviewer for cross-cut
 
 1. Use the inlined Slice Summary and UAT templates.
 2. {{skillActivation}}
-3. Run all slice-level verification checks from the slice plan. Fix failures before marking done.
-4. Task summaries use flat files under `tasks/` such as `T01-SUMMARY.md`; never use `tasks/*/SUMMARY.md`.
+3. Run all slice-level verification checks from the slice plan. Fix failures before marking done; refresh current state if needed.
+4. Task summaries use a flat file layout under `tasks/` such as `T01-SUMMARY.md`, not inside per-task subdirectories like `tasks/T01/SUMMARY.md`. Never use `tasks/*/SUMMARY.md`.
 5. If observability/diagnostics were planned, verify them unless the slice is simple.
 6. Address every gate in Gates to Close. Q8 maps to **Operational Readiness**: health signal, failure signal, recovery procedure, monitoring gaps. Empty sections are recorded as omitted.
 7. If requirement status changed, call `gsd_requirement_update`; do not write `.gsd/REQUIREMENTS.md` directly.
@@ -34,7 +34,7 @@ Use `subagent` only for fresh-context review when useful: reviewer for cross-cut
 12. Do not run git commands.
 13. Update `.gsd/PROJECT.md` with a full `write` only if the current project state needs refresh.
 
-**Autonomous execution:** do not call `ask_user_questions` or `secure_env_collect`; make reasonable assumptions and document them.
+**Autonomous execution:** no human is available. Do not call `ask_user_questions` or `secure_env_collect`; make reasonable assumptions and document them.
 
 **File system safety:** if re-reading task summaries, use `find .gsd/milestones/{{milestoneId}}/slices/{{sliceId}}/tasks -name "*-SUMMARY.md"` or `ls .gsd/milestones/{{milestoneId}}/slices/{{sliceId}}/tasks/*-SUMMARY.md`. Never pass `{{slicePath}}` or any directory path directly to the `read` tool.
 

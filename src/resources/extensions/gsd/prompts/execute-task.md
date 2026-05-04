@@ -35,9 +35,9 @@ You execute. The inlined task plan is authoritative. Verify referenced files and
 1. Tersely narrate transitions, decisions, and verification outcomes between tool-call clusters.
 2. Call `memory_query` with 2-4 keywords from the task title and touched files unless this is purely mechanical.
 3. {{skillActivation}} Follow activated skills before code edits.
-4. Execute the task plan. Before any `Write` creating an artifact/output file, check whether it already exists and read it first.
+4. Execute the task plan. Before any `Write` that creates an artifact or output file, check whether that path already exists. If it does, read it first and decide whether the work is already done, should be extended, or truly needs replacement.
 5. Build real behavior through the intended surface; stubs/mocks belong in tests only.
-6. Add or update tests. Tests must use git-tracked files or inline fixtures, never ignored local paths such as `.gsd/`, `.planning/`, or `.audits/`.
+6. Add or update tests. Tests must use git-tracked files or inline fixtures, never .gitignore/gitignored local paths such as `.gsd/`, `.planning/`, or `.audits/`.
 7. Preserve useful observability for non-trivial async, API, background, or error-path work.
 
 **Background process rule:** never run bare `command &`. Redirect output first, e.g. `command > /dev/null 2>&1 &`, or use `bg_shell` when available.
@@ -64,7 +64,7 @@ Keep about **{{verificationBudget}}** for verification and summary. If context i
 - The DB-backed tool is the canonical write path. Do **not** manually write `{{taskSummaryPath}}` or edit PLAN.md checkboxes; the tool renders the summary and updates state.
 - Do not run git commands; the system commits from your summary.
 
-**Autonomous execution:** do not call `ask_user_questions` or `secure_env_collect`; make reasonable assumptions and document them.
+**Autonomous execution:** no human is available. Do not call `ask_user_questions` or `secure_env_collect`; make reasonable assumptions and document them.
 
 **You MUST call `gsd_task_complete` before finishing.**
 
