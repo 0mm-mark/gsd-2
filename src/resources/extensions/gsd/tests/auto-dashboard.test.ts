@@ -273,7 +273,8 @@ test("updateProgressWidget refreshes slice progress cache immediately", (t) => {
   );
 
   const progress = getRoadmapSlicesSync();
-  assert.deepEqual(progress && {
+  assert.ok(progress, "progress cache should be populated immediately after updateProgressWidget");
+  assert.deepEqual({
     done: progress.done,
     total: progress.total,
     activeSliceTasks: progress.activeSliceTasks,
