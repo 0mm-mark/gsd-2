@@ -34,6 +34,10 @@ export type WorkflowMode =
   | "markdown-phase"
   | "auto-milestone";
 
+export function isLegacyWorkflowMode(mode: WorkflowMode | undefined): boolean {
+  return (mode ?? "markdown-phase") !== "auto-milestone";
+}
+
 export interface TemplateEntry {
   name: string;
   description: string;

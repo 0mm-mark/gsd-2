@@ -11,6 +11,7 @@ import {
   loadRegistry,
   resolveByName,
   autoDetect,
+  isLegacyWorkflowMode,
   listTemplates,
   getTemplateInfo,
   loadWorkflowTemplate,
@@ -49,6 +50,20 @@ console.log('\n── Registry Loading ──');
     }
     assert.ok(Array.isArray(entry.triggers) && entry.triggers.length > 0, `${id}: triggers should be non-empty array`);
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Workflow Mode Classification
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n── Workflow Mode Classification ──');
+
+{
+  assert.equal(isLegacyWorkflowMode(undefined), true, 'missing mode defaults to markdown-phase legacy engine');
+  assert.equal(isLegacyWorkflowMode('markdown-phase'), true, 'markdown-phase is legacy engine telemetry');
+  assert.equal(isLegacyWorkflowMode('yaml-step'), true, 'yaml-step is legacy engine telemetry');
+  assert.equal(isLegacyWorkflowMode('oneshot'), true, 'oneshot is legacy engine telemetry');
+  assert.equal(isLegacyWorkflowMode('auto-milestone'), false, 'auto-milestone is the DB-backed milestone path');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
