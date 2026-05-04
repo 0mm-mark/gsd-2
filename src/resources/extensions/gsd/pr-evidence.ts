@@ -5,6 +5,8 @@ export type PrChangeType = "feat" | "fix" | "refactor" | "test" | "docs" | "chor
 
 export interface PrEvidenceInput {
   milestoneId: string;
+  subjectId?: string;
+  subjectKind?: "milestone" | "slice" | "workflow";
   milestoneTitle?: string;
   changeType?: PrChangeType;
   linkedIssue?: string;
@@ -49,7 +51,9 @@ function bulletList(values: readonly string[], fallback: string): string {
 }
 
 export function buildPrEvidence(input: PrEvidenceInput): PrEvidence {
-  const milestoneTitle = input.milestoneTitle?.trim() || input.milestoneId;
+  const subjectId = input.subjectId?.trim() || input.milestoneId;
+  const subjectKind = input.subjectKind ?? "milestone";
+  const subjectTitle = input.milestoneTitle?.trim() || subjectId;
   const changeType = input.changeType ?? "feat";
   const summaries = normalizeList(input.summaries);
   const roadmapItems = normalizeList(input.roadmapItems);
@@ -57,20 +61,20 @@ export function buildPrEvidence(input: PrEvidenceInput): PrEvidence {
   const testsRun = normalizeList(input.testsRun);
   const rollbackNotes = normalizeList(input.rollbackNotes);
   const linkedIssue = input.linkedIssue?.trim() || "Not specified. Add an issue link before marking this PR ready if CONTRIBUTING.md requires one.";
-  const why = input.why?.trim() || "Milestone work is complete and ready for review.";
-  const how = input.how?.trim() || "Generated from GSD milestone evidence and local workflow artifacts.";
-  const title = `${changeType}: ${milestoneTitle}`;
+  const why = input.why?.trim() || `${capitalize(subjectKind)} work is complete and ready for review.`;
+  const how = input.how?.trim() || "Generated from GSD evidence and local workflow artifacts.";
+  const title = `${changeType}: ${subjectTitle}`;
 
   const sections: string[] = [
     "## TL;DR",
     "",
-    `**What:** Ship milestone ${input.milestoneId} - ${milestoneTitle}`,
+    `**What:** Ship ${subjectKind} ${subjectId} - ${subjectTitle}`,
     `**Why:** ${why}`,
     `**How:** ${how}`,
     "",
     "## What",
     "",
-    summaries.length > 0 ? summaries.join("\n\n") : `Milestone ${input.milestoneId} completed.`,
+    summaries.length > 0 ? summaries.join("\n\n") : `${capitalize(subjectKind)} ${subjectId} completed.`,
     "",
     "## Why",
     "",
@@ -113,4 +117,8 @@ export function buildPrEvidence(input: PrEvidenceInput): PrEvidence {
   }
 
   return { title, body: sections.join("\n") };
+}
+
+function capitalize(value: string): string {
+  return value.slice(0, 1).toUpperCase() + value.slice(1);
 }

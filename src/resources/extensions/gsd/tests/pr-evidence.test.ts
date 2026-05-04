@@ -64,3 +64,16 @@ test("pr-evidence: missing issue, tests, and rollback data are explicit", () => 
   assert.ok(evidence.body.includes("No behavior-changing rollback notes recorded."));
   assert.ok(!evidence.body.includes("## AI Assistance Disclosure"));
 });
+
+test("pr-evidence: subject metadata supports non-milestone PRs", () => {
+  const evidence = buildPrEvidence({
+    milestoneId: "M001",
+    subjectId: "S01",
+    subjectKind: "slice",
+    milestoneTitle: "Auth Slice",
+  });
+
+  assert.equal(evidence.title, "feat: Auth Slice");
+  assert.ok(evidence.body.includes("Ship slice S01 - Auth Slice"));
+  assert.ok(evidence.body.includes("Slice work is complete and ready for review."));
+});
