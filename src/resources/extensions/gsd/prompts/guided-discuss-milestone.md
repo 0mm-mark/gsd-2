@@ -14,20 +14,20 @@ Discuss milestone {{milestoneId}} ("{{milestoneTitle}}"). Identify real gray are
 
 ### Read project shape
 
-Before your first question round, read `.gsd/PROJECT.md` and find `## Project Shape` -> `**Complexity:**`. Use **`simple`** or **`complex`**; default to `complex` if missing, stale, or unclear.
+Before asking, read `.gsd/PROJECT.md` and find `## Project Shape` -> `**Complexity:**`. Use `simple` or `complex`; default to `complex` if missing, stale, or unclear.
 
-- **`simple`**: 1-2 plain-text rounds; skip parallel-research investigation; use `ask_user_questions` only for concrete alternatives.
-- **`complex`**: full investigation, 3-4-option structured questions, multiple rounds.
+- `simple`: 1-2 plain-text rounds; skip parallel-research investigation; use `ask_user_questions` only for concrete alternatives.
+- `complex`: investigate first, use 3-4-option structured questions, and expect multiple rounds.
 
 ### Before your first question round
 
-Before asking, investigate enough to avoid assumption-driven questions:
-- Scout the codebase with `rg`, `find`, or `scout` for existing work this milestone touches.
-- Check roadmap context above, if present, for surrounding scope.
-- Use `resolve_library` / `get_library_docs` for unfamiliar libraries; prefer them over `search-the-web`.
-- Identify the 3-5 biggest behavioral/architectural unknowns where the answer materially changes what gets built.
+Investigate enough to avoid assumption-driven questions:
+- Scout existing code with `rg`, `find`, or `scout`.
+- Check roadmap context above for surrounding scope.
+- Use `resolve_library` / `get_library_docs` for unfamiliar libraries; prefer them over web search.
+- Identify the 3-5 behavioral or architectural unknowns that materially change what gets built.
 
-**Web search budget:** Limited per turn, typically 3-5. Prefer `resolve_library` / `get_library_docs` and `search_and_read`. Use 2-3 web searches in the first pass; save the rest for later rounds. Do not go deep.
+**Web search budget:** Limited per turn, typically 3-5. Prefer docs tools and `search_and_read`; use 2-3 searches in the first pass and save the rest.
 
 ### Question rounds
 
@@ -41,7 +41,7 @@ Ask **1–3 questions per round**. Target one focus at a time:
 
 **Never fabricate or simulate user input.** Never generate fake transcript markers like `[User]`, `[Human]`, or `User:`. Ask one question round, then wait for the user's actual response before continuing.
 
-**If `{{structuredQuestionsAvailable}}` is `true`:** use `ask_user_questions` exactly once per turn with 1-3 question objects. Keep labels short (3-5 words). In **`complex`** mode, multi-choice questions MUST offer **3 or 4 concrete, researched options** plus **"Other — let me discuss"**; options must be grounded in the investigation, not generic placeholders. In **`simple`** mode, 2 options is fine for binary alternatives. Binary depth-check/wrap-up gates are exempt. If the user chooses "Other — let me discuss" or gives a long freeform answer, switch to plain-text follow-up before resuming structured questions.
+**If `{{structuredQuestionsAvailable}}` is `true`:** use `ask_user_questions` exactly once per turn with 1-3 question objects. Keep labels short (3-5 words). In `complex` mode, multi-choice questions MUST offer **3 or 4 concrete, researched options** plus **"Other — let me discuss"**; options must be grounded in the investigation, not placeholders. In `simple` mode, 2 options is fine for binary alternatives. Binary depth-check/wrap-up gates are exempt. If the user chooses "Other — let me discuss" or gives a long freeform answer, switch to plain-text follow-up before resuming structured questions.
 
 **If `{{structuredQuestionsAvailable}}` is `false`:** ask questions in plain text. Keep each round to 1–3 focused questions. Wait for answers before asking the next round.
 
@@ -63,7 +63,7 @@ After each answer round, decide whether the context would be strong enough.
 
 ## Questioning philosophy
 
-Start open and follow energy. Challenge vague phrases like "smart" or "good UX" with specifics. Default to experience/outcome questions, but ask implementation questions when choices materially affect scope, proof, compliance, integration, deployment, or irreversible architecture. Use position-first framing: "I'd lean toward X because Y — does that match your thinking?" Ask what would disappoint them and what they explicitly do not want.
+Start open and follow the user's language. Challenge vague phrases with specifics. Default to experience/outcome questions, but ask implementation questions when choices materially affect scope, proof, compliance, integration, deployment, or irreversible architecture. Use position-first framing when useful: "I'd lean toward X because Y — does that match your thinking?" Ask what would disappoint them and what they explicitly do not want.
 
 **Anti-patterns — never do these:**
 - Checklist walking through predetermined topics regardless of what the user said
