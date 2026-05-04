@@ -33,6 +33,7 @@ import { logError, logWarning } from "./workflow-logger.js";
 import { createDbAdapter, type DbAdapter } from "./db-adapter.js";
 import { createCoordinationTablesV24 } from "./db-coordination-schema.js";
 import { createDbConnectionCache, type DbConnectionCacheEntry } from "./db-connection-cache.js";
+import { isMemoriesFtsAvailableSchema, tryCreateMemoriesFtsSchema } from "./db-memory-fts-schema.js";
 import { createDbOpenState, type DbOpenPhase } from "./db-open-state.js";
 import { createRuntimeKvTableV25 } from "./db-runtime-kv-schema.js";
 import { ensureColumn, getCurrentSchemaVersion, recordSchemaVersion } from "./db-schema-metadata.js";
@@ -468,47 +469,13 @@ function initSchema(db: DbAdapter, fileBacked: boolean): void {
  * to LIKE-based scans in `memory-store.queryMemoriesRanked`.
  */
 export function tryCreateMemoriesFts(db: DbAdapter): boolean {
-  try {
-    db.exec(`
-      CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
-      USING fts5(content, content='memories', content_rowid='seq', tokenize='porter unicode61')
-    `);
-    // Triggers mirror inserts / updates / deletes on the base memories table.
-    db.exec(`
-      CREATE TRIGGER IF NOT EXISTS memories_ai
-      AFTER INSERT ON memories BEGIN
-        INSERT INTO memories_fts(rowid, content) VALUES (new.seq, new.content);
-      END
-    `);
-    db.exec(`
-      CREATE TRIGGER IF NOT EXISTS memories_ad
-      AFTER DELETE ON memories BEGIN
-        INSERT INTO memories_fts(memories_fts, rowid, content) VALUES ('delete', old.seq, old.content);
-      END
-    `);
-    db.exec(`
-      CREATE TRIGGER IF NOT EXISTS memories_au
-      AFTER UPDATE OF content ON memories BEGIN
-        INSERT INTO memories_fts(memories_fts, rowid, content) VALUES ('delete', old.seq, old.content);
-        INSERT INTO memories_fts(rowid, content) VALUES (new.seq, new.content);
-      END
-    `);
-    return true;
-  } catch (err) {
-    logWarning("db", `FTS5 unavailable — memory queries will use LIKE fallback: ${(err as Error).message}`);
-    return false;
-  }
+  return tryCreateMemoriesFtsSchema(db, {
+    onUnavailable: (message) => logWarning("db", message),
+  });
 }
 
 export function isMemoriesFtsAvailable(db: DbAdapter): boolean {
-  try {
-    const row = db
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='memories_fts'")
-      .get();
-    return !!row;
-  } catch {
-    return false;
-  }
+  return isMemoriesFtsAvailableSchema(db);
 }
 
 function migrateSchema(db: DbAdapter): void {
