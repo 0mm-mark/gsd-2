@@ -1,33 +1,32 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const AGENT_END_RECOVERY_TS = join(__dirname, "..", "bootstrap", "agent-end-recovery.ts");
-const AUTO_PHASES_TS = join(__dirname, "..", "auto", "phases.ts");
-const AUTO_TS = join(__dirname, "..", "auto.ts");
+import { _buildAbortedPauseContext } from "../bootstrap/agent-end-recovery.js";
+import { _buildCancelledUnitStopReason } from "../auto/phases.js";
 
-test("aborted agent_end with errorMessage propagates structured pause context", () => {
-  // allow-source-grep: regression guard for aborted-turn error-context propagation wiring.
-  const source = readFileSync(AGENT_END_RECOVERY_TS, "utf-8");
+test("aborted agent_end maps errorMessage into structured aborted pause context", () => {
+  const withMessage = _buildAbortedPauseContext({ errorMessage: "provider aborted request" });
+  assert.deepEqual(withMessage, {
+    message: "provider aborted request",
+    category: "aborted",
+    isTransient: true,
+  });
 
-  assert.ok(source.includes("category: \"aborted\""));
-  assert.ok(source.includes("message: hasErrorMessage ? String(lastMsg.errorMessage) : \"Operation aborted\""));
+  const withoutMessage = _buildAbortedPauseContext({});
+  assert.deepEqual(withoutMessage, {
+    message: "Operation aborted",
+    category: "aborted",
+    isTransient: true,
+  });
 });
 
-test("cancelled non-session failures are not labeled as session-creation failures", () => {
-  // allow-source-grep: regression guard for cancellation-message branch wording.
-  const source = readFileSync(AUTO_PHASES_TS, "utf-8");
+test("cancelled non-session failures are labeled as unit aborts (not session-creation failures)", () => {
+  const cancelled = _buildCancelledUnitStopReason("execute-task", "M001-S001-T001", {
+    category: "aborted",
+    message: "tool invocation cancelled",
+  });
 
-  assert.ok(source.includes("const isSessionCreationFailure = errorCategory === \"session-failed\""));
-  assert.ok(source.includes("Unit ${unitType} ${unitId} aborted after dispatch"));
-});
-
-test("pause metadata persists pauseReason for resumable diagnostics", () => {
-  // allow-source-grep: regression guard for persisted pause reason field.
-  const source = readFileSync(AUTO_TS, "utf-8");
-
-  assert.ok(source.includes("pauseReason: _errorContext?.message"));
+  assert.match(cancelled.notifyMessage, /aborted after dispatch/);
+  assert.equal(cancelled.stopReason, "Unit aborted: tool invocation cancelled");
+  assert.equal(cancelled.loopReason, "unit-aborted");
 });

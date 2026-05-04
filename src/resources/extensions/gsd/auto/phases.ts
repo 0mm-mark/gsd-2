@@ -232,6 +232,33 @@ async function emitCancelledUnitEnd(
   });
 }
 
+export function _buildCancelledUnitStopReason(
+  unitType: string,
+  unitId: string,
+  errorContext?: { message: string; category: string },
+): {
+  notifyMessage: string;
+  stopReason: string;
+  loopReason: "session-failed" | "unit-aborted";
+} {
+  const cancellationMessage = errorContext?.message ?? "unknown";
+  const isSessionCreationFailure = errorContext?.category === "session-failed";
+
+  if (isSessionCreationFailure) {
+    return {
+      notifyMessage: `Session creation failed for ${unitType} ${unitId}: ${cancellationMessage}. Stopping auto-mode.`,
+      stopReason: `Session creation failed: ${cancellationMessage}`,
+      loopReason: "session-failed",
+    };
+  }
+
+  return {
+    notifyMessage: `Unit ${unitType} ${unitId} aborted after dispatch: ${cancellationMessage}. Stopping auto-mode.`,
+    stopReason: `Unit aborted: ${cancellationMessage}`,
+    loopReason: "unit-aborted",
+  };
+}
+
 async function failClosedOnFinalizeTimeout(
   ic: IterationContext,
   iterData: IterationData,
@@ -1875,26 +1902,15 @@ export async function runUnitPhase(
     await deps.autoCommitUnit?.(s.basePath, unitType, unitId, ctx);
     await emitCancelledUnitEnd(ic, unitType, unitId, unitStartSeq, unitResult.errorContext);
 
-    const cancellationMessage = unitResult.errorContext?.message ?? "unknown";
-    const isSessionCreationFailure = errorCategory === "session-failed";
-
-    if (isSessionCreationFailure) {
-      ctx.ui.notify(
-        `Session creation failed for ${unitType} ${unitId}: ${cancellationMessage}. Stopping auto-mode.`,
-        "warning",
-      );
-      await deps.stopAuto(ctx, pi, `Session creation failed: ${cancellationMessage}`);
-      debugLog("autoLoop", { phase: "exit", reason: "session-failed" });
-      return { action: "break", reason: "session-failed" };
-    }
-
-    ctx.ui.notify(
-      `Unit ${unitType} ${unitId} aborted after dispatch: ${cancellationMessage}. Stopping auto-mode.`,
-      "warning",
+    const cancelledStop = _buildCancelledUnitStopReason(
+      unitType,
+      unitId,
+      unitResult.errorContext,
     );
-    await deps.stopAuto(ctx, pi, `Unit aborted: ${cancellationMessage}`);
-    debugLog("autoLoop", { phase: "exit", reason: "unit-aborted" });
-    return { action: "break", reason: "unit-aborted" };
+    ctx.ui.notify(cancelledStop.notifyMessage, "warning");
+    await deps.stopAuto(ctx, pi, cancelledStop.stopReason);
+    debugLog("autoLoop", { phase: "exit", reason: cancelledStop.loopReason });
+    return { action: "break", reason: cancelledStop.loopReason };
   }
 
   // ── Immediate unit closeout (metrics, activity log, memory) ────────
