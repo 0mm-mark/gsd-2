@@ -16,12 +16,14 @@ const {
   collectContractsMetrics,
   collectDirectoryMetrics,
   collectPromptMetrics,
+  collectProcessMetrics,
   collectTestCompileMetrics,
   compareReports,
   formatDelta,
   formatDeltaPercent,
   countMatches,
   countLegacyContractImports,
+  hasProcessDocConflict,
   metricSafeLabel,
   numberOrZero,
   parseArgs,
@@ -91,6 +93,7 @@ test("collectBaseline returns the phase-zero report shape", async () => {
   await writeFile(join(root, "VISION.md"), "# Vision\n");
   await writeFile(join(root, "src/resources/extensions/gsd/prompts/system.md"), "System prompt\n");
   await writeContractsSurfaceFixtures(root);
+  await writeProcessMetricFixtures(root);
   await writeFile(join(root, "src/tests/fixtures/contracts-golden-fixtures.ts"), "export const fixtures = [];\n");
   await mkdir(join(root, "dist-test"), { recursive: true });
   await writeFile(join(root, "dist-test/example.js"), "console.log('ok')\n");
@@ -108,6 +111,12 @@ test("collectBaseline returns the phase-zero report shape", async () => {
   assert.equal(report.metrics["testCompile.cacheHit"], 1);
   assert.equal(report.contracts.fixtures.total, 1);
   assert.equal(report.metrics["contracts.fixtures.sharedBySurface"], 6);
+  assert.equal(report.process.prGeneratorConsumers, 3);
+  assert.equal(report.metrics["process.prGeneratorConsumers"], 3);
+  assert.equal(report.metrics["process.prBodiesMissingIssue"], 0);
+  assert.equal(report.metrics["process.prBodiesMissingTests"], 0);
+  assert.equal(report.metrics["process.docsConflictCount"], 0);
+  assert.equal(report.metrics["process.shipPathCount"], 3);
   assert.equal(report.commands.length, 0);
   for (const metricName of BASELINE_REQUIRED_METRICS) {
     assert.equal(typeof report.metrics[metricName], "number", `${metricName} should be indexed as a number`);
@@ -134,6 +143,13 @@ test("buildMetricIndex includes workspace and command metrics", () => {
       inputBytes: 19,
       wallMs: 20,
     },
+    process: {
+      prGeneratorConsumers: 3,
+      prBodiesMissingIssue: 0,
+      prBodiesMissingTests: 0,
+      docsConflictCount: 0,
+      shipPathCount: 3,
+    },
     workspace: {
       areas: [
         { area: "src", exists: true, fileCount: 11, bytes: 12 },
@@ -153,6 +169,8 @@ test("buildMetricIndex includes workspace and command metrics", () => {
   assert.equal(metrics["workspace.src.fileCount"], 11);
   assert.equal(metrics["testCompile.cacheHit"], 1);
   assert.equal(metrics["testCompile.fileCount"], 17);
+  assert.equal(metrics["process.prGeneratorConsumers"], 3);
+  assert.equal(metrics["process.shipPathCount"], 3);
   assert.equal(metrics["command.test-compile.wallMs"], 13);
   assert.equal(metrics["verify.changedWallMs"], 21);
   assert.equal(metrics["verify.fullWallMs"], 24);
@@ -206,6 +224,29 @@ test("collectContractsMetrics reports fixture coverage and surface drift", async
   assert.equal(metrics.fixtures.sharedBySurface, 6);
   assert.equal(metrics.surfaceDriftFailures, 0);
   assert.equal(metrics.legacyTypeImportsRemaining, 0);
+});
+
+test("collectProcessMetrics reports Phase 7 process dashboard fields", async () => {
+  const root = await makeFixtureRoot();
+  await writeProcessMetricFixtures(root);
+  await writeFile(
+    join(root, "docs/dev/conflict.md"),
+    "Markdown files are the authoritative state model.\n",
+  );
+
+  const metrics = await collectProcessMetrics(root);
+
+  assert.equal(metrics.prGeneratorConsumers, 3);
+  assert.deepEqual(metrics.prGeneratorConsumerFiles, [
+    "src/resources/extensions/github-sync/templates.ts",
+    "src/resources/extensions/gsd/auto-worktree.ts",
+    "src/resources/extensions/gsd/commands-ship.ts",
+  ]);
+  assert.equal(metrics.prBodiesMissingIssue, 0);
+  assert.equal(metrics.prBodiesMissingTests, 0);
+  assert.equal(metrics.docsConflictCount, 1);
+  assert.deepEqual(metrics.docsConflictFiles, ["docs/dev/conflict.md"]);
+  assert.equal(metrics.shipPathCount, 3);
 });
 
 test("compareReports computes scalar metric deltas", () => {
@@ -281,6 +322,13 @@ test("countLegacyContractImports ignores rpc-client implementation types", () =>
   );
 });
 
+test("hasProcessDocConflict flags obsolete state-authority language", () => {
+  assert.equal(hasProcessDocConflict("DB is authoritative; markdown is a projection."), false);
+  assert.equal(hasProcessDocConflict("Markdown files are the authoritative runtime state."), true);
+  assert.equal(hasProcessDocConflict("The filesystem-authoritative model owns status."), true);
+  assert.equal(hasProcessDocConflict(".gsd/ROADMAP.md is the source of truth."), true);
+});
+
 test("renderSummary includes key sections for human inspection", async () => {
   const root = await makeFixtureRoot();
   await writeFile(join(root, "src/resources/extensions/gsd/prompts/system.md"), "System prompt\n");
@@ -294,6 +342,7 @@ test("renderSummary includes key sections for human inspection", async () => {
   assert.match(summary, /dist-test metrics/);
   assert.match(summary, /Test compile metrics/);
   assert.match(summary, /Contracts metrics/);
+  assert.match(summary, /Process metrics/);
   assert.match(summary, /Largest prompt files/);
 });
 
@@ -326,6 +375,33 @@ async function makeFixtureRoot(): Promise<string> {
   await mkdir(join(root, "src/resources/extensions/gsd/prompts"), { recursive: true });
   await mkdir(join(root, "src/tests/fixtures"), { recursive: true });
   return root;
+}
+
+async function writeProcessMetricFixtures(root: string): Promise<void> {
+  await mkdir(join(root, "src/resources/extensions/github-sync"), { recursive: true });
+  await mkdir(join(root, "src/resources/extensions/gsd"), { recursive: true });
+  await mkdir(join(root, "src/resources/extensions/gsd/docs"), { recursive: true });
+  await mkdir(join(root, "docs/dev"), { recursive: true });
+  await writeFile(
+    join(root, "src/resources/extensions/gsd/pr-evidence.ts"),
+    'export function buildPrEvidence() { return "## Linked Issue\\n## Tests Run"; }\n',
+  );
+  await writeFile(
+    join(root, "src/resources/extensions/gsd/commands-ship.ts"),
+    'import { buildPrEvidence } from "./pr-evidence.js"; buildPrEvidence(); ghCreatePR();\n',
+  );
+  await writeFile(
+    join(root, "src/resources/extensions/gsd/auto-worktree.ts"),
+    'import { buildPrEvidence } from "./pr-evidence.js"; buildPrEvidence(); createDraftPR();\n',
+  );
+  await writeFile(
+    join(root, "src/resources/extensions/github-sync/templates.ts"),
+    'import { buildPrEvidence } from "../gsd/pr-evidence.js"; buildPrEvidence(); ghCreatePR();\n',
+  );
+  await writeFile(
+    join(root, "src/resources/extensions/gsd/docs/state.md"),
+    "DB is authoritative. Markdown is a projection for humans.\n",
+  );
 }
 
 async function writeContractsSurfaceFixtures(root: string): Promise<void> {

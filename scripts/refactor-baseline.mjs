@@ -80,6 +80,11 @@ export const BASELINE_REQUIRED_METRICS = [
   "contracts.fixtures.sharedBySurface",
   "contracts.surfaceDriftFailures",
   "contracts.legacyTypeImportsRemaining",
+  "process.prGeneratorConsumers",
+  "process.prBodiesMissingIssue",
+  "process.prBodiesMissingTests",
+  "process.docsConflictCount",
+  "process.shipPathCount",
 ];
 
 export function parseArgs(argv = process.argv.slice(2)) {
@@ -141,6 +146,7 @@ export async function collectBaseline(root, commandSpecs = []) {
     workspaceMetrics,
     contractsMetrics,
     testCompileMetrics,
+    processMetrics,
   ] = await Promise.all([
     collectPromptMetrics(root),
     collectContextMetrics(root),
@@ -148,6 +154,7 @@ export async function collectBaseline(root, commandSpecs = []) {
     collectWorkspaceMetrics(root),
     collectContractsMetrics(root),
     collectTestCompileMetrics(root),
+    collectProcessMetrics(root),
   ]);
 
   const commandTimings = [];
@@ -168,6 +175,7 @@ export async function collectBaseline(root, commandSpecs = []) {
     workspace: workspaceMetrics,
     contracts: contractsMetrics,
     testCompile: testCompileMetrics,
+    process: processMetrics,
     commands: commandTimings,
     startup: {
       timingEnv: "GSD_STARTUP_TIMING=1",
@@ -318,6 +326,57 @@ export async function collectContractsMetrics(root) {
   };
 }
 
+export async function collectProcessMetrics(root) {
+  const sourceFiles = await collectFiles(join(root, "src", "resources", "extensions"), file => file.endsWith(".ts"));
+  const docFiles = [
+    ...await collectFiles(join(root, "src", "resources", "extensions", "gsd", "docs"), file => file.endsWith(".md")),
+    ...await collectFiles(join(root, "docs", "dev"), file => file.endsWith(".md")),
+  ];
+  const prEvidencePath = normalizePath(join("src", "resources", "extensions", "gsd", "pr-evidence.ts"));
+  const consumerFiles = [];
+  const shipPathFiles = [];
+
+  for (const file of sourceFiles) {
+    const rel = normalizePath(relative(root, file));
+    if (rel.includes("/tests/")) continue;
+    const content = await readFile(file, "utf8");
+    if (rel !== prEvidencePath && content.includes("buildPrEvidence(")) {
+      consumerFiles.push(rel);
+    }
+    if (
+      content.includes("ghCreatePR(") ||
+      content.includes("createDraftPR(") ||
+      content.includes("gh pr create")
+    ) {
+      shipPathFiles.push(rel);
+    }
+  }
+
+  const evidenceContent = existsSync(join(root, prEvidencePath))
+    ? await readFile(join(root, prEvidencePath), "utf8")
+    : "";
+  const hasLinkedIssueSection = evidenceContent.includes("## Linked Issue");
+  const hasTestsSection = evidenceContent.includes("## Tests Run");
+  const docsConflicts = [];
+  for (const file of docFiles) {
+    const content = await readFile(file, "utf8");
+    if (hasProcessDocConflict(content)) {
+      docsConflicts.push(normalizePath(relative(root, file)));
+    }
+  }
+
+  return {
+    prGeneratorConsumers: consumerFiles.length,
+    prGeneratorConsumerFiles: consumerFiles.sort(),
+    prBodiesMissingIssue: hasLinkedIssueSection ? 0 : shipPathFiles.length,
+    prBodiesMissingTests: hasTestsSection ? 0 : shipPathFiles.length,
+    docsConflictCount: docsConflicts.length,
+    docsConflictFiles: docsConflicts.sort(),
+    shipPathCount: shipPathFiles.length,
+    shipPathFiles: shipPathFiles.sort(),
+  };
+}
+
 export async function collectDirectoryMetrics(dir) {
   if (!existsSync(dir)) {
     return {
@@ -400,6 +459,11 @@ export function buildMetricIndex(report) {
     "testCompile.bytesCopied": report.testCompile?.bytesCopied ?? 0,
     "testCompile.inputBytes": report.testCompile?.inputBytes ?? 0,
     "testCompile.wallMs": report.testCompile?.wallMs ?? 0,
+    "process.prGeneratorConsumers": report.process?.prGeneratorConsumers ?? 0,
+    "process.prBodiesMissingIssue": report.process?.prBodiesMissingIssue ?? 0,
+    "process.prBodiesMissingTests": report.process?.prBodiesMissingTests ?? 0,
+    "process.docsConflictCount": report.process?.docsConflictCount ?? 0,
+    "process.shipPathCount": report.process?.shipPathCount ?? 0,
   };
 
   for (const area of report.workspace.areas) {
@@ -511,6 +575,12 @@ export function countLegacyContractImports(value) {
   return count;
 }
 
+export function hasProcessDocConflict(content) {
+  return /markdown\s+(?:files?\s+)?(?:are|is)\s+(?:the\s+)?authoritative/i.test(content)
+    || /filesystem[-\s]+authoritative/i.test(content)
+    || /\.gsd\/[^\n]*(?:source of truth|authoritative source)/i.test(content);
+}
+
 export function metricSafeLabel(label) {
   return label
     .trim()
@@ -586,6 +656,13 @@ export function renderSummary(report) {
     `- shared surfaces: ${report.contracts.fixtures.sharedBySurface}/${report.contracts.surfaces.length}`,
     `- drift failures: ${report.contracts.surfaceDriftFailures}`,
     `- legacy type imports remaining: ${report.contracts.legacyTypeImportsRemaining}`,
+    "",
+    "Process metrics",
+    `- PR generator consumers: ${report.process?.prGeneratorConsumers ?? 0}`,
+    `- PR bodies missing issue: ${report.process?.prBodiesMissingIssue ?? 0}`,
+    `- PR bodies missing tests: ${report.process?.prBodiesMissingTests ?? 0}`,
+    `- docs conflicts: ${report.process?.docsConflictCount ?? 0}`,
+    `- shipping paths: ${report.process?.shipPathCount ?? 0}`,
   ];
 
   if (report.commands.length > 0) {
