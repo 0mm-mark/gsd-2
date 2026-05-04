@@ -77,6 +77,7 @@ import {
   settleDispatchCompleted,
   settleDispatchFailed,
 } from "./workflow-dispatch-ledger.js";
+import { completeWorkflowIteration } from "./workflow-iteration-completion.js";
 import { createWorkflowJournalReporter } from "./workflow-journal-reporter.js";
 import { createWorkflowPhaseReporter } from "./workflow-phase-reporter.js";
 import { createWorkflowTurnReporter } from "./workflow-turn-reporter.js";
@@ -492,6 +493,19 @@ export async function autoLoop(
 
     let dispatchId: number | null = null;
     let dispatchSettled = false;
+    const completeIteration = (): void => {
+      completeWorkflowIteration({
+        get consecutiveErrors() { return consecutiveErrors; },
+        set consecutiveErrors(value) { consecutiveErrors = value; },
+        get consecutiveCooldowns() { return consecutiveCooldowns; },
+        set consecutiveCooldowns(value) { consecutiveCooldowns = value; },
+        recentErrorMessages,
+      }, {
+        emitIterationEnd: () => journalReporter.emit("iteration-end", { iteration }),
+        saveStuckState: () => saveStuckState(s, loopState),
+        logIterationComplete: () => debugLog("autoLoop", { phase: "iteration-complete", iteration }),
+      });
+    };
 
     try {
       // ── Blanket try/catch: one bad iteration must not kill the session
@@ -728,12 +742,7 @@ export async function autoLoop(
         });
 
         deps.clearUnitTimeout();
-        consecutiveErrors = 0;
-        consecutiveCooldowns = 0;
-        recentErrorMessages.length = 0;
-        journalReporter.emit("iteration-end", { iteration });
-        saveStuckState(s, loopState); // persist across session restarts (#3704)
-        debugLog("autoLoop", { phase: "iteration-complete", iteration });
+        completeIteration();
 
         const reconcileDecision = decideEngineReconcile(
           reconcileResult.outcome === "stop"
@@ -954,12 +963,7 @@ export async function autoLoop(
         markCompleted: markDispatchCompleted,
         logWriteFailure: logDispatchLedgerWriteFailure,
       }) || dispatchSettled;
-      consecutiveErrors = 0; // Iteration completed successfully
-      consecutiveCooldowns = 0;
-      recentErrorMessages.length = 0;
-      journalReporter.emit("iteration-end", { iteration });
-      saveStuckState(s, loopState); // persist across session restarts (#4382)
-      debugLog("autoLoop", { phase: "iteration-complete", iteration });
+      completeIteration();
       finishTurn("completed");
     } catch (loopErr) {
       // ── Blanket catch: absorb unexpected exceptions, apply graduated recovery ──
