@@ -359,16 +359,6 @@ export async function autoLoop(
       const prefs = deps.loadEffectiveGSDPreferences()?.preferences;
       const uokFlags = resolveUokFlags(prefs);
 
-      // ── Check sidecar queue before deriveState ──
-      const sidecarItem = await dequeueSidecarItem({
-        queue: s.sidecarQueue,
-        executionGraphEnabled: uokFlags.executionGraph,
-        scheduleQueue: scheduleSidecarQueue,
-        warnSchedulingFailure: message => logWarning("dispatch", `sidecar queue scheduling failed: ${message}`),
-        logDequeue: payload => debugLog("autoLoop", { phase: "sidecar-dequeue", ...payload }),
-        emitDequeue: payload => journalReporter.emit("sidecar-dequeue", payload),
-      });
-
       const sessionLockOutcome = validateWorkflowSessionLock({
         active: s.active,
         iteration,
@@ -390,6 +380,16 @@ export async function autoLoop(
       if (sessionLockOutcome.action === "stop" && sessionLockOutcome.reason === "session-lock-lost") {
         break;
       }
+
+      // ── Check sidecar queue before deriveState ──
+      const sidecarItem = await dequeueSidecarItem({
+        queue: s.sidecarQueue,
+        executionGraphEnabled: uokFlags.executionGraph,
+        scheduleQueue: scheduleSidecarQueue,
+        warnSchedulingFailure: message => logWarning("dispatch", `sidecar queue scheduling failed: ${message}`),
+        logDequeue: payload => debugLog("autoLoop", { phase: "sidecar-dequeue", ...payload }),
+        emitDequeue: payload => journalReporter.emit("sidecar-dequeue", payload),
+      });
 
       const ic: IterationContext = { ctx, pi, s, deps, prefs, iteration, flowId, nextSeq };
       journalReporter.emit("iteration-start", { iteration });
@@ -442,13 +442,18 @@ export async function autoLoop(
             stopAuto: reason => deps.stopAuto(ctx, pi, reason),
           },
         });
-        if (dispatchFlow.action === "break") break;
+        if (dispatchFlow.action === "break") {
+          finishTurn("stopped", "manual-attention", "custom-engine-dispatch-stop");
+          break;
+        }
         if (dispatchFlow.action === "continue") {
+          finishTurn("skipped");
           continue;
         }
 
         // dispatch.action === "dispatch"
         if (dispatch.action !== "dispatch") {
+          finishTurn("skipped");
           continue;
         }
         const step = dispatch.step;
