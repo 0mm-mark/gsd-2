@@ -17,3 +17,17 @@ export function columnExists(db: DbAdapter, table: string, column: string): bool
 export function ensureColumn(db: DbAdapter, table: string, column: string, ddl: string): void {
   if (!columnExists(db, table, column)) db.exec(ddl);
 }
+
+export function getCurrentSchemaVersion(db: DbAdapter): number {
+  const row = db.prepare("SELECT MAX(version) as v FROM schema_version").get();
+  return row ? (row["v"] as number) : 0;
+}
+
+export function recordSchemaVersion(db: DbAdapter, version: number): void {
+  db.prepare(
+    "INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)",
+  ).run({
+    ":version": version,
+    ":applied_at": new Date().toISOString(),
+  });
+}

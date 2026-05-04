@@ -3,22 +3,26 @@
 
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { columnExists, ensureColumn, indexExists } from "../db-schema-metadata.ts";
+import { columnExists, ensureColumn, getCurrentSchemaVersion, indexExists, recordSchemaVersion } from "../db-schema-metadata.ts";
 import type { DbAdapter, DbStatement } from "../db-adapter.ts";
 
 class FakeStatement implements DbStatement {
   private readonly getResult: Record<string, unknown> | undefined;
   private readonly allResult: Record<string, unknown>[];
+  private readonly onRun: ((params: unknown[]) => void) | undefined;
 
   constructor(
     getResult: Record<string, unknown> | undefined,
     allResult: Record<string, unknown>[],
+    onRun?: (params: unknown[]) => void,
   ) {
     this.getResult = getResult;
     this.allResult = allResult;
+    this.onRun = onRun;
   }
 
-  run(): unknown {
+  run(...params: unknown[]): unknown {
+    this.onRun?.(params);
     return undefined;
   }
 
@@ -33,9 +37,11 @@ class FakeStatement implements DbStatement {
 
 class FakeAdapter implements DbAdapter {
   readonly execCalls: string[] = [];
+  readonly runCalls: unknown[][] = [];
   readonly preparedSql: string[] = [];
   indexNames = new Set<string>();
   tableColumns = new Map<string, string[]>();
+  currentVersion: number | undefined = undefined;
 
   exec(sql: string): void {
     this.execCalls.push(sql);
@@ -45,6 +51,14 @@ class FakeAdapter implements DbAdapter {
     this.preparedSql.push(sql);
     if (sql.includes("sqlite_master")) {
       return new FakeStatement(this.indexNames.size > 0 ? { present: 1 } : undefined, []);
+    }
+    if (sql.includes("SELECT MAX(version)")) {
+      return new FakeStatement(this.currentVersion === undefined ? undefined : { v: this.currentVersion }, []);
+    }
+    if (sql.includes("INSERT INTO schema_version")) {
+      return new FakeStatement(undefined, [], (params) => {
+        this.runCalls.push(params);
+      });
     }
     const tableMatch = /^PRAGMA table_info\(([^)]+)\)$/.exec(sql);
     if (tableMatch) {
@@ -81,5 +95,21 @@ describe("db-schema-metadata", () => {
     ensureColumn(db, "tasks", "id", "ALTER TABLE tasks ADD COLUMN id TEXT");
 
     assert.deepEqual(db.execCalls, ["ALTER TABLE tasks ADD COLUMN status TEXT"]);
+  });
+
+  test("getCurrentSchemaVersion returns zero when no version row exists", () => {
+    const db = new FakeAdapter();
+
+    assert.equal(getCurrentSchemaVersion(db), 0);
+  });
+
+  test("records schema version rows with timestamps", () => {
+    const db = new FakeAdapter();
+
+    recordSchemaVersion(db, 25);
+
+    assert.equal(db.runCalls.length, 1);
+    assert.equal((db.runCalls[0][0] as Record<string, unknown>)[":version"], 25);
+    assert.equal(typeof (db.runCalls[0][0] as Record<string, unknown>)[":applied_at"], "string");
   });
 });

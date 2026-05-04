@@ -33,7 +33,7 @@ import { logError, logWarning } from "./workflow-logger.js";
 import { createDbAdapter, type DbAdapter } from "./db-adapter.js";
 import { createDbConnectionCache, type DbConnectionCacheEntry } from "./db-connection-cache.js";
 import { createDbOpenState, type DbOpenPhase } from "./db-open-state.js";
-import { ensureColumn, indexExists } from "./db-schema-metadata.js";
+import { ensureColumn, getCurrentSchemaVersion, indexExists, recordSchemaVersion } from "./db-schema-metadata.js";
 import { createDbTransactionRunner } from "./db-transaction.js";
 import { createSqliteProviderLoader, suppressSqliteWarning, type DbProviderName, type SqliteFallbackOpen } from "./db-provider.js";
 // Type-only import to avoid a circular runtime dep. The runtime side of
@@ -594,12 +594,7 @@ function initSchema(db: DbAdapter, fileBacked: boolean): void {
       db.exec("CREATE INDEX IF NOT EXISTS idx_memory_relations_from ON memory_relations(from_id)");
       db.exec("CREATE INDEX IF NOT EXISTS idx_memory_relations_to ON memory_relations(to_id)");
 
-      db.prepare(
-        "INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)",
-      ).run({
-        ":version": SCHEMA_VERSION,
-        ":applied_at": new Date().toISOString(),
-      });
+      recordSchemaVersion(db, SCHEMA_VERSION);
     }
 
     db.exec("COMMIT");
@@ -662,8 +657,7 @@ export function isMemoriesFtsAvailable(db: DbAdapter): boolean {
 }
 
 function migrateSchema(db: DbAdapter): void {
-  const row = db.prepare("SELECT MAX(version) as v FROM schema_version").get();
-  const currentVersion = row ? (row["v"] as number) : 0;
+  const currentVersion = getCurrentSchemaVersion(db);
   if (currentVersion >= SCHEMA_VERSION) return;
 
   // Backup database before migration so a mid-migration crash doesn't
@@ -699,10 +693,7 @@ function migrateSchema(db: DbAdapter): void {
           imported_at TEXT NOT NULL DEFAULT ''
         )
       `);
-      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
-        ":version": 2,
-        ":applied_at": new Date().toISOString(),
-      });
+      recordSchemaVersion(db, 2);
     }
 
     if (currentVersion < 3) {
@@ -731,20 +722,14 @@ function migrateSchema(db: DbAdapter): void {
       db.exec("CREATE INDEX IF NOT EXISTS idx_memories_active ON memories(superseded_by)");
       db.exec("DROP VIEW IF EXISTS active_memories");
       db.exec("CREATE VIEW active_memories AS SELECT * FROM memories WHERE superseded_by IS NULL");
-      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
-        ":version": 3,
-        ":applied_at": new Date().toISOString(),
-      });
+      recordSchemaVersion(db, 3);
     }
 
     if (currentVersion < 4) {
       ensureColumn(db, "decisions", "made_by", `ALTER TABLE decisions ADD COLUMN made_by TEXT NOT NULL DEFAULT 'agent'`);
       db.exec("DROP VIEW IF EXISTS active_decisions");
       db.exec("CREATE VIEW active_decisions AS SELECT * FROM decisions WHERE superseded_by IS NULL");
-      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
-        ":version": 4,
-        ":applied_at": new Date().toISOString(),
-      });
+      recordSchemaVersion(db, 4);
     }
 
     if (currentVersion < 5) {
@@ -806,29 +791,20 @@ function migrateSchema(db: DbAdapter): void {
           FOREIGN KEY (milestone_id, slice_id, task_id) REFERENCES tasks(milestone_id, slice_id, id)
         )
       `);
-      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
-        ":version": 5,
-        ":applied_at": new Date().toISOString(),
-      });
+      recordSchemaVersion(db, 5);
     }
 
     if (currentVersion < 6) {
       ensureColumn(db, "slices", "full_summary_md", `ALTER TABLE slices ADD COLUMN full_summary_md TEXT NOT NULL DEFAULT ''`);
       ensureColumn(db, "slices", "full_uat_md", `ALTER TABLE slices ADD COLUMN full_uat_md TEXT NOT NULL DEFAULT ''`);
-      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
-        ":version": 6,
-        ":applied_at": new Date().toISOString(),
-      });
+      recordSchemaVersion(db, 6);
     }
 
     if (currentVersion < 7) {
       ensureColumn(db, "slices", "depends", `ALTER TABLE slices ADD COLUMN depends TEXT NOT NULL DEFAULT '[]'`);
       ensureColumn(db, "slices", "demo", `ALTER TABLE slices ADD COLUMN demo TEXT NOT NULL DEFAULT ''`);
       ensureColumn(db, "milestones", "depends_on", `ALTER TABLE milestones ADD COLUMN depends_on TEXT NOT NULL DEFAULT '[]'`);
-      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
-        ":version": 7,
-        ":applied_at": new Date().toISOString(),
-      });
+      recordSchemaVersion(db, 7);
     }
 
     if (currentVersion < 8) {
@@ -886,29 +862,20 @@ function migrateSchema(db: DbAdapter): void {
       `);
       db.exec("CREATE INDEX IF NOT EXISTS idx_replan_history_milestone ON replan_history(milestone_id, created_at)");
 
-      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
-        ":version": 8,
-        ":applied_at": new Date().toISOString(),
-      });
+      recordSchemaVersion(db, 8);
     }
 
     if (currentVersion < 9) {
       ensureColumn(db, "slices", "sequence", `ALTER TABLE slices ADD COLUMN sequence INTEGER DEFAULT 0`);
       ensureColumn(db, "tasks", "sequence", `ALTER TABLE tasks ADD COLUMN sequence INTEGER DEFAULT 0`);
 
-      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
-        ":version": 9,
-        ":applied_at": new Date().toISOString(),
-      });
+      recordSchemaVersion(db, 9);
     }
 
     if (currentVersion < 10) {
       ensureColumn(db, "slices", "replan_triggered_at", `ALTER TABLE slices ADD COLUMN replan_triggered_at TEXT DEFAULT NULL`);
 
-      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
-        ":version": 10,
-        ":applied_at": new Date().toISOString(),
-      });
+      recordSchemaVersion(db, 10);
     }
 
     if (currentVersion < 11) {
@@ -921,10 +888,7 @@ function migrateSchema(db: DbAdapter): void {
         WHERE slice_id IS NOT NULL AND task_id IS NOT NULL
       `);
 
-      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
-        ":version": 11,
-        ":applied_at": new Date().toISOString(),
-      });
+      recordSchemaVersion(db, 11);
     }
 
     if (currentVersion < 12) {
@@ -949,10 +913,7 @@ function migrateSchema(db: DbAdapter): void {
           FOREIGN KEY (milestone_id, slice_id) REFERENCES slices(milestone_id, id)
         )
       `);
-      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
-        ":version": 12,
-        ":applied_at": new Date().toISOString(),
-      });
+      recordSchemaVersion(db, 12);
     }
 
     if (currentVersion < 13) {
@@ -963,10 +924,7 @@ function migrateSchema(db: DbAdapter): void {
       db.exec("CREATE INDEX IF NOT EXISTS idx_quality_gates_pending ON quality_gates(milestone_id, slice_id, status)");
       db.exec("CREATE INDEX IF NOT EXISTS idx_verification_evidence_task ON verification_evidence(milestone_id, slice_id, task_id)");
       ensureVerificationEvidenceDedupIndex(db);
-      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
-        ":version": 13,
-        ":applied_at": new Date().toISOString(),
-      });
+      recordSchemaVersion(db, 13);
     }
 
     if (currentVersion < 14) {
@@ -981,10 +939,7 @@ function migrateSchema(db: DbAdapter): void {
         )
       `);
       db.exec("CREATE INDEX IF NOT EXISTS idx_slice_deps_target ON slice_dependencies(milestone_id, depends_on_slice_id)");
-      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
-        ":version": 14,
-        ":applied_at": new Date().toISOString(),
-      });
+      recordSchemaVersion(db, 14);
     }
 
     if (currentVersion < 15) {
@@ -1053,10 +1008,7 @@ function migrateSchema(db: DbAdapter): void {
       db.exec("CREATE INDEX IF NOT EXISTS idx_turn_git_tx_turn ON turn_git_transactions(trace_id, turn_id)");
       db.exec("CREATE INDEX IF NOT EXISTS idx_audit_events_trace ON audit_events(trace_id, ts)");
       db.exec("CREATE INDEX IF NOT EXISTS idx_audit_events_turn ON audit_events(trace_id, turn_id, ts)");
-      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
-        ":version": 15,
-        ":applied_at": new Date().toISOString(),
-      });
+      recordSchemaVersion(db, 15);
     }
 
     if (currentVersion < 16) {
@@ -1065,10 +1017,7 @@ function migrateSchema(db: DbAdapter): void {
       ensureColumn(db, "slices", "sketch_scope", `ALTER TABLE slices ADD COLUMN sketch_scope TEXT NOT NULL DEFAULT ''`);
       // ADR-011 Phase 2: decisions can now be sourced from escalation resolutions.
       ensureColumn(db, "decisions", "source", `ALTER TABLE decisions ADD COLUMN source TEXT NOT NULL DEFAULT 'discussion'`);
-      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
-        ":version": 16,
-        ":applied_at": new Date().toISOString(),
-      });
+      recordSchemaVersion(db, 16);
     }
 
     if (currentVersion < 17) {
@@ -1079,10 +1028,7 @@ function migrateSchema(db: DbAdapter): void {
       ensureColumn(db, "tasks", "escalation_artifact_path", `ALTER TABLE tasks ADD COLUMN escalation_artifact_path TEXT DEFAULT NULL`);
       ensureColumn(db, "tasks", "escalation_override_applied_at", `ALTER TABLE tasks ADD COLUMN escalation_override_applied_at TEXT DEFAULT NULL`);
       db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_escalation_pending ON tasks(milestone_id, slice_id, escalation_pending)");
-      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
-        ":version": 17,
-        ":applied_at": new Date().toISOString(),
-      });
+      recordSchemaVersion(db, 17);
     }
 
     if (currentVersion < 18) {
@@ -1110,10 +1056,7 @@ function migrateSchema(db: DbAdapter): void {
       db.exec("CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope)");
       db.exec("CREATE INDEX IF NOT EXISTS idx_memory_sources_kind ON memory_sources(kind)");
       db.exec("CREATE INDEX IF NOT EXISTS idx_memory_sources_scope ON memory_sources(scope)");
-      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
-        ":version": 18,
-        ":applied_at": new Date().toISOString(),
-      });
+      recordSchemaVersion(db, 18);
     }
 
     if (currentVersion < 19) {
@@ -1136,10 +1079,7 @@ function migrateSchema(db: DbAdapter): void {
           logWarning("db", `FTS5 backfill failed: ${(err as Error).message}`);
         }
       }
-      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
-        ":version": 19,
-        ":applied_at": new Date().toISOString(),
-      });
+      recordSchemaVersion(db, 19);
     }
 
     if (currentVersion < 20) {
@@ -1156,10 +1096,7 @@ function migrateSchema(db: DbAdapter): void {
       `);
       db.exec("CREATE INDEX IF NOT EXISTS idx_memory_relations_from ON memory_relations(from_id)");
       db.exec("CREATE INDEX IF NOT EXISTS idx_memory_relations_to ON memory_relations(to_id)");
-      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
-        ":version": 20,
-        ":applied_at": new Date().toISOString(),
-      });
+      recordSchemaVersion(db, 20);
     }
 
     if (currentVersion < 21) {
@@ -1171,10 +1108,7 @@ function migrateSchema(db: DbAdapter): void {
       // throws "duplicate column" on the loser of a concurrent open race even
       // though the transaction wrapper protects the schema_version row).
       ensureColumn(db, "memories", "structured_fields", "ALTER TABLE memories ADD COLUMN structured_fields TEXT DEFAULT NULL");
-      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
-        ":version": 21,
-        ":applied_at": new Date().toISOString(),
-      });
+      recordSchemaVersion(db, 21);
     }
 
     if (currentVersion < 22) {
@@ -1217,10 +1151,7 @@ function migrateSchema(db: DbAdapter): void {
       // against DBs that somehow lack it after a partial migration).
       ensureColumn(db, "quality_gates", "scope", "ALTER TABLE quality_gates ADD COLUMN scope TEXT NOT NULL DEFAULT 'slice'");
       ensureColumn(db, "assessments", "scope", "ALTER TABLE assessments ADD COLUMN scope TEXT NOT NULL DEFAULT ''");
-      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
-        ":version": 22,
-        ":applied_at": new Date().toISOString(),
-      });
+      recordSchemaVersion(db, 22);
     }
 
     if (currentVersion < 23) {
@@ -1228,10 +1159,7 @@ function migrateSchema(db: DbAdapter): void {
       // historical QUEUE-ORDER.json file remains a projection, but runtime
       // derivation must not read it as authoritative state.
       ensureColumn(db, "milestones", "sequence", "ALTER TABLE milestones ADD COLUMN sequence INTEGER DEFAULT 0");
-      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
-        ":version": 23,
-        ":applied_at": new Date().toISOString(),
-      });
+      recordSchemaVersion(db, 23);
     }
 
     if (currentVersion < 24) {
@@ -1240,20 +1168,14 @@ function migrateSchema(db: DbAdapter): void {
       // helper runs in the fresh-install path); for upgraded DBs this is
       // the only place these tables get created.
       createCoordinationTablesV24(db);
-      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
-        ":version": 24,
-        ":applied_at": new Date().toISOString(),
-      });
+      recordSchemaVersion(db, 24);
     }
 
     if (currentVersion < 25) {
       // v25: runtime_kv non-correctness-critical key-value storage. See
       // createRuntimeKvTableV25 for the full schema + invariants.
       createRuntimeKvTableV25(db);
-      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
-        ":version": 25,
-        ":applied_at": new Date().toISOString(),
-      });
+      recordSchemaVersion(db, 25);
     }
 
     db.exec("COMMIT");
