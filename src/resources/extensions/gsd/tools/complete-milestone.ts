@@ -1,3 +1,4 @@
+// GSD2 complete-milestone tool handler
 /**
  * complete-milestone handler — the core operation behind gsd_complete_milestone.
  *
@@ -57,6 +58,7 @@ export interface CompleteMilestoneResult {
   milestoneId: string;
   summaryPath: string;
   stale?: boolean;
+  alreadyComplete?: boolean;
 }
 
 function renderMilestoneSummaryMarkdown(params: CompleteMilestoneParams): string {
@@ -143,6 +145,7 @@ export async function handleCompleteMilestone(
   // ── Guards + DB writes inside a single transaction (prevents TOCTOU) ───
   const completedAt = new Date().toISOString();
   let guardError: string | null = null;
+  let alreadyComplete = false;
 
   transaction(() => {
     // State machine preconditions (inside txn for atomicity)
@@ -152,7 +155,7 @@ export async function handleCompleteMilestone(
       return;
     }
     if (isClosedStatus(milestone.status)) {
-      guardError = `milestone ${params.milestoneId} is already complete`;
+      alreadyComplete = true;
       return;
     }
 
@@ -238,14 +241,16 @@ export async function handleCompleteMilestone(
     logWarning("tool", `complete-milestone manifest warning: ${(mfErr as Error).message}`);
   }
   try {
-    appendEvent(basePath, {
-      cmd: "complete-milestone",
-      params: { milestoneId: params.milestoneId },
-      ts: new Date().toISOString(),
-      actor: "agent",
-      actor_name: params.actorName,
-      trigger_reason: params.triggerReason,
-    });
+    if (!alreadyComplete) {
+      appendEvent(basePath, {
+        cmd: "complete-milestone",
+        params: { milestoneId: params.milestoneId },
+        ts: new Date().toISOString(),
+        actor: "agent",
+        actor_name: params.actorName,
+        trigger_reason: params.triggerReason,
+      });
+    }
   } catch (eventErr) {
     logError("tool", `complete-milestone event log FAILED — completion invisible to reconciliation`, { error: (eventErr as Error).message });
   }
@@ -254,5 +259,6 @@ export async function handleCompleteMilestone(
     milestoneId: params.milestoneId,
     summaryPath,
     ...(projectionStale ? { stale: true } : {}),
+    ...(alreadyComplete ? { alreadyComplete: true } : {}),
   };
 }
