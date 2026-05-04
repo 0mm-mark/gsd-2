@@ -58,6 +58,7 @@ import {
   decideCustomEngineRecovery,
   decideCustomEngineVerifyRetry,
   decideDispatchClaim,
+  decideDispatchNodeKind,
   decideEngineDispatch,
   decideEngineReconcile,
   decideFinalizeResult,
@@ -275,30 +276,6 @@ function checkMemoryPressure(): { pressured: boolean; heapMB: number; limitMB: n
   return { pressured: pct > MEMORY_PRESSURE_THRESHOLD, heapMB, limitMB, pct };
 }
 
-function resolveDispatchNodeKind(
-  unitType: string,
-  sidecarItem?: SidecarItem,
-): UokGraphNode["kind"] {
-  if (sidecarItem?.kind === "hook") return "hook";
-  if (sidecarItem?.kind === "triage") return "verification";
-  if (sidecarItem?.kind === "quick-task") return "team-worker";
-
-  if (unitType.startsWith("hook/")) return "hook";
-  if (unitType === "reactive-execute") return "subagent";
-  if (
-    unitType === "gate-evaluate"
-    || unitType === "validate-milestone"
-    || unitType === "run-uat"
-    || unitType === "complete-slice"
-  ) {
-    return "verification";
-  }
-  if (unitType === "replan-slice" || unitType === "reassess-roadmap") {
-    return "reprocess";
-  }
-  return "unit";
-}
-
 async function enforceMinRequestInterval(s: AutoSession, prefs: IterationContext["prefs"]): Promise<void> {
   const minInterval = prefs?.min_request_interval_ms ?? 0;
   const decision = decideMinRequestInterval({
@@ -342,7 +319,7 @@ async function runUnitPhaseViaContract(
   await scheduler.run([
     {
       id: nodeId,
-      kind: resolveDispatchNodeKind(iterData.unitType, sidecarItem),
+      kind: decideDispatchNodeKind(iterData.unitType, sidecarItem?.kind) as UokGraphNode["kind"],
       dependsOn: [],
       metadata: {
         unitType: iterData.unitType,
