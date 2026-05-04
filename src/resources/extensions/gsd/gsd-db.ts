@@ -34,6 +34,16 @@ import { createDbAdapter, type DbAdapter } from "./db-adapter.js";
 import { createCoordinationTablesV24 } from "./db-coordination-schema.js";
 import { createDbConnectionCache, type DbConnectionCacheEntry } from "./db-connection-cache.js";
 import {
+  emptyTaskStatusCounts,
+  rowToActiveTaskSummary,
+  rowToIdStatusSummary,
+  rowToTaskStatusCounts,
+  rowsToStringColumn,
+  type ActiveTaskSummary,
+  type IdStatusSummary,
+  type TaskStatusCounts,
+} from "./db-lightweight-query-rows.js";
+import {
   rowToActiveDecision,
   rowToActiveRequirement,
   rowToDecision,
@@ -59,6 +69,7 @@ const _require = createRequire(import.meta.url);
 type ProviderName = DbProviderName;
 
 export type { ArtifactRow, MilestoneRow } from "./db-milestone-artifact-rows.js";
+export type { ActiveTaskSummary, IdStatusSummary, TaskStatusCounts } from "./db-lightweight-query-rows.js";
 export type { SliceRow, TaskRow } from "./db-task-slice-rows.js";
 
 const providerLoader = createSqliteProviderLoader({
@@ -2258,36 +2269,36 @@ export function getArtifact(path: string): ArtifactRow | null {
 // ─── Lightweight Query Variants (hot-path optimized) ─────────────────────
 
 /** Fast milestone status check — avoids deserializing JSON planning fields. */
-export function getActiveMilestoneIdFromDb(): { id: string; status: string } | null {
+export function getActiveMilestoneIdFromDb(): IdStatusSummary | null {
   if (!currentDb) return null;
   const row = currentDb.prepare(
     "SELECT id, status FROM milestones WHERE status NOT IN ('complete', 'parked') ORDER BY id LIMIT 1",
   ).get();
   if (!row) return null;
-  return { id: row["id"] as string, status: row["status"] as string };
+  return rowToIdStatusSummary(row);
 }
 
 /** Fast slice status check — avoids deserializing JSON depends/planning fields. */
-export function getSliceStatusSummary(milestoneId: string): Array<{ id: string; status: string }> {
+export function getSliceStatusSummary(milestoneId: string): IdStatusSummary[] {
   if (!currentDb) return [];
   return currentDb.prepare(
     "SELECT id, status FROM slices WHERE milestone_id = :mid ORDER BY sequence, id",
-  ).all({ ":mid": milestoneId }).map((r) => ({ id: r["id"] as string, status: r["status"] as string }));
+  ).all({ ":mid": milestoneId }).map(rowToIdStatusSummary);
 }
 
 /** Fast task status check — avoids deserializing JSON arrays and large text fields. */
-export function getActiveTaskIdFromDb(milestoneId: string, sliceId: string): { id: string; status: string; title: string } | null {
+export function getActiveTaskIdFromDb(milestoneId: string, sliceId: string): ActiveTaskSummary | null {
   if (!currentDb) return null;
   const row = currentDb.prepare(
     "SELECT id, status, title FROM tasks WHERE milestone_id = :mid AND slice_id = :sid AND status NOT IN ('complete', 'done') ORDER BY sequence, id LIMIT 1",
   ).get({ ":mid": milestoneId, ":sid": sliceId });
   if (!row) return null;
-  return { id: row["id"] as string, status: row["status"] as string, title: row["title"] as string };
+  return rowToActiveTaskSummary(row);
 }
 
 /** Count tasks by status for a slice — useful for progress reporting without full row load. */
-export function getSliceTaskCounts(milestoneId: string, sliceId: string): { total: number; done: number; pending: number } {
-  if (!currentDb) return { total: 0, done: 0, pending: 0 };
+export function getSliceTaskCounts(milestoneId: string, sliceId: string): TaskStatusCounts {
+  if (!currentDb) return emptyTaskStatusCounts();
   const row = currentDb.prepare(
     `SELECT
        COUNT(*) as total,
@@ -2295,8 +2306,7 @@ export function getSliceTaskCounts(milestoneId: string, sliceId: string): { tota
        SUM(CASE WHEN status NOT IN ('complete', 'done') THEN 1 ELSE 0 END) as pending
      FROM tasks WHERE milestone_id = :mid AND slice_id = :sid`,
   ).get({ ":mid": milestoneId, ":sid": sliceId });
-  if (!row) return { total: 0, done: 0, pending: 0 };
-  return { total: (row["total"] as number) ?? 0, done: (row["done"] as number) ?? 0, pending: (row["pending"] as number) ?? 0 };
+  return rowToTaskStatusCounts(row);
 }
 
 // ─── Slice Dependencies (junction table) ─────────────────────────────────
@@ -2317,9 +2327,10 @@ export function syncSliceDependencies(milestoneId: string, sliceId: string, depe
 /** Get all slices that depend on a given slice. */
 export function getDependentSlices(milestoneId: string, sliceId: string): string[] {
   if (!currentDb) return [];
-  return currentDb.prepare(
+  const rows = currentDb.prepare(
     "SELECT slice_id FROM slice_dependencies WHERE milestone_id = :mid AND depends_on_slice_id = :sid",
-  ).all({ ":mid": milestoneId, ":sid": sliceId }).map((r) => r["slice_id"] as string);
+  ).all({ ":mid": milestoneId, ":sid": sliceId });
+  return rowsToStringColumn(rows, "slice_id");
 }
 
 // ─── Worktree DB Helpers ──────────────────────────────────────────────────
