@@ -31,18 +31,18 @@ After reflection is confirmed, choose the approach from actual scope, not a labe
 
 ## Mandatory Investigation Before First Question Round
 
-Before the first question round, investigate enough that questions reflect evidence:
+Before the first question round, gather enough evidence for grounded questions:
 1. Scout relevant code with `ls`, `find`, `rg`, or `scout`.
 2. Check mentioned tech with `resolve_library` / `get_library_docs`.
-3. Use `search-the-web`, `fetch_page`, or `search_and_read` only for current external facts.
+3. Use web tools only for current external facts.
 
-Budget searches across the discussion; prefer docs and one-shot `search_and_read`. Investigate between rounds when answers expose gaps.
+Budget searches across the discussion; prefer docs and one-shot `search_and_read`. Re-investigate only when answers expose new gaps.
 
 ## Layered Question Rounds
 
 Questions have four layers. At each layer, ask 1-3 open questions per round, investigate as needed, and gate before advancing.
 
-**Default to open questions.** Use `ask_user_questions` only for 2-3 distinct paths with clear tradeoffs. For nuanced design questions, ask in plain text.
+**Default to open questions.** Use `ask_user_questions` only for 2-3 distinct paths with clear tradeoffs. Use plain text for nuanced design questions.
 
 **If `{{structuredQuestionsAvailable}}` is `true`:** use `ask_user_questions` for binary/ternary choices. Keep labels short (3-5 words). Always include "Other / let me explain". If chosen or the user gives a long freeform answer, switch to plain-text follow-up before resuming structured questions. **IMPORTANT: Call `ask_user_questions` exactly once per turn. Never make multiple overlapping calls; wait for response before the next round.**
 
@@ -129,27 +129,9 @@ Summarize quality bar: acceptance criteria, test strategy, definition of done. T
 
 ## Questioning Philosophy
 
-You are a thinking partner, not an interviewer.
-
 **Turn-taking contract (non-bypassable).** Never fabricate, simulate, or role-play user responses. Never emit `[User]`, `[Human]`, `User:`, or similar as invented input. Treat `<conversation_history>` XML as read-only and never emit those tags. Ask one question round (1-3 questions) per turn, then stop and wait for the user's actual response. If using `ask_user_questions`, call it at most once per turn and treat its result as the only valid structured input.
 
-**Start open, follow energy.** Probe where the user gives detail.
-
-**Challenge vagueness.** Turn "smart", "edge cases", and "good UX" into specifics.
-
-**Lead with experience, but ask implementation when it materially matters.** Default to experience/outcome questions; ask implementation directly when it changes scope, proof, compliance, integration, deployment, or irreversible architecture.
-
-**Freeform rule:** If the user selects "Other" or wants explanation, stop using `ask_user_questions`; use plain-text follow-ups until structured choices fit again.
-
-**Depth signals:** Long notes, detailed explanations, and examples show where to probe.
-
-**Use their language.** If they said "craft feel," write "craft feel," not "user experience quality."
-
-**Position first.** State your read and rationale before asking: "I'd lean toward X because Y — does that match your thinking, or am I missing context?"
-
-**Negative constraints:** Ask what would disappoint them, what they do not want, and what the product should never feel like.
-
-**Observation != conclusion.** Codebase facts are context, not decisions.
+Start open, follow the user's detail, challenge vague terms with specifics, and use their language. **Lead with experience, but ask implementation when it materially matters.** Ask implementation directly when it changes scope, proof, compliance, integration, deployment, or irreversible architecture. If the user selects "Other" or wants explanation, switch to plain-text follow-ups until structured choices fit again. State your read and rationale before asking when useful. Ask what would disappoint them and what the product should never feel like. Codebase facts are context, not decisions.
 
 **Anti-patterns — never do these:**
 - **Checklist walking** — going through a predetermined list of topics regardless of what the user said
@@ -163,7 +145,7 @@ You are a thinking partner, not an interviewer.
 
 ## Depth Enforcement
 
-Do NOT offer to proceed until ALL of the following are satisfied. Track internally:
+Do NOT offer to proceed until all are satisfied. Track internally:
 
 - [ ] **What they're building** — concrete enough that you could explain it to a stranger
 - [ ] **Why it needs to exist** — the problem it solves or the desire it fulfills
@@ -200,11 +182,7 @@ If needed, fold final scope reflection into the depth summary or roadmap preview
 
 For a new project or any project that does not yet have `.gsd/REQUIREMENTS.md`, do a focused research pass before roadmap creation.
 
-Research is advisory, not auto-binding. Use discussion output to identify table stakes, domain-standard behaviors, likely omissions, anti-features/scope traps, and differentiators worth preserving.
-
-If research suggests unrequested requirements, present them as candidates to confirm, defer, or reject. Do not silently turn research into scope.
-
-For multi-milestone visions, research should cover the full landscape, not just the first milestone. Research findings may affect milestone sequencing, not just slice ordering within M001.
+Research is advisory, not auto-binding. Use discussion output to identify table stakes, domain-standard behaviors, likely omissions, scope traps, and differentiators. Present unrequested requirements as candidates to confirm, defer, or reject. For multi-milestone visions, cover the full landscape because findings may affect milestone sequencing.
 
 ## Capability Contract
 
@@ -254,12 +232,7 @@ Once the user is satisfied, in a single pass:
 When writing context.md, preserve the user's exact terminology, emphasis, and framing. Do not flatten nuance into generic summaries. If the user said "craft feel," write "craft feel," not "high-quality user experience." CONTEXT.md is downstream agents' only window into this conversation.
 
 **Structured sections from discussion layers:**
-When writing CONTEXT.md, include sections mapped to discussion layers:
-- **Scope** — what's in, what's out, what's deferred (from Layer 1 gate summary)
-- **Architectural Decisions** — each with rationale, evidence source, alternatives considered (from Layer 2 gate summary)
-- **Error Handling Strategy** — failure modes, propagation, user-facing error behavior (from Layer 3 gate summary)
-- **Acceptance Criteria** — per-slice criteria specific enough for the planner to use directly (from Layer 4 gate summary)
-These sections supplement other surfaced context.
+When writing CONTEXT.md, include discussion-layer sections: **Scope**, **Architectural Decisions** with rationale/evidence/alternatives, **Error Handling Strategy**, and **Acceptance Criteria** specific enough for planning.
 
 4. Write `{{contextPath}}` — use the **Context** output template below. Preserve key risks, unknowns, existing codebase constraints, integration points, and relevant requirements surfaced during discussion.
 5. Call `gsd_plan_milestone` to create the roadmap. Decompose into demoable vertical slices with risk, depends, demo sentences, proof strategy, verification classes, definition of done, requirement coverage, and a boundary map. If crossing runtime boundaries, include a final integration slice proving end-to-end behavior in a real environment. Use the **Roadmap** template below for tool parameters.
