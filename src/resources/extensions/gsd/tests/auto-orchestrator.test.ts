@@ -212,8 +212,8 @@ test("recovery stop clears activeUnit", async () => {
 
   assert.equal(result.kind, "stopped");
   assert.equal(orchestrator.getStatus().activeUnit, undefined);
-  assert.ok(calls.includes("journal:advance-error"));
-  assert.ok(calls.includes("notify:error"));
+  assert.ok(calls.includes("journal:advance-stopped"));
+  assert.ok(!calls.includes("notify:error"));
 });
 
 test("recovery retry maps to paused result", async () => {

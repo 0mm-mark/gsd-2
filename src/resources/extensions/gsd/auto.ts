@@ -1459,7 +1459,7 @@ export function createWiredAutoOrchestrationModule(
     runtime: {
       async ensureLockOwnership() {
         const status = getSessionLockStatus(runtimeBasePath);
-        if (status === "in_use_by_other") {
+        if (!status.valid || status.failureReason === "pid-mismatch") {
           throw new Error("session lock held by another process");
         }
       },
@@ -1903,7 +1903,6 @@ export async function startAuto(
     }
     // Rebuild scope now that s.basePath reflects the actual worktree (or project root).
     rebuildScope(s.basePath, s.currentMilestoneId);
-    ensureOrchestrationModule(ctx, pi, s.basePath || base);
     // Ensure the workflow-logger audit log is pinned to the project root
     // even when auto-mode is entered via a path that bypasses the
     // bootstrap/dynamic-tools ensureDbOpen() → setLogBasePath() chain
@@ -1936,6 +1935,7 @@ export async function startAuto(
       rebuildScope(s.basePath, s.currentMilestoneId);
     }
 
+    ensureOrchestrationModule(ctx, pi, s.basePath || base);
     registerSigtermHandler(lockBase());
 
     ctx.ui.setStatus("gsd-auto", s.stepMode ? "next" : "auto");

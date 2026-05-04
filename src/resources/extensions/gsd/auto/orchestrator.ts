@@ -106,13 +106,16 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
 
       const journalName = result.kind === "paused"
         ? "advance-paused"
-        : "advance-error";
+        : result.kind === "stopped"
+          ? "advance-stopped"
+          : "advance-error";
       await this.deps.runtime.journalTransition({ name: journalName, reason: recovery.reason });
 
-      const notificationName = result.kind === "paused"
-        ? "pause"
-        : "error";
-      await this.deps.notifications.notifyLifecycle({ name: notificationName, detail: recovery.reason });
+      if (result.kind === "paused") {
+        await this.deps.notifications.notifyLifecycle({ name: "pause", detail: recovery.reason });
+      } else if (result.kind === "error") {
+        await this.deps.notifications.notifyLifecycle({ name: "error", detail: recovery.reason });
+      }
       await this.deps.health.postAdvanceRecord(result);
       return result;
     }
