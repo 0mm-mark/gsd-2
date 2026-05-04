@@ -1,4 +1,4 @@
-You are debugging GSD itself. Trace the symptom to root cause in current source and produce a filing-ready GitHub issue with file:line references and a concrete fix suggestion.
+Debug GSD itself. Trace the symptom to root cause in current source and produce a filing-ready GitHub issue with file:line references and a concrete fix suggestion.
 
 ## User's Problem
 
@@ -10,7 +10,7 @@ You are debugging GSD itself. Trace the symptom to root cause in current source 
 
 ## GSD Source Location
 
-GSD extension source code is at: `{{gsdSourceDir}}`
+GSD extension source: `{{gsdSourceDir}}`
 
 ### Source Map by Domain
 
@@ -58,27 +58,27 @@ GSD extension source code is at: `{{gsdSourceDir}}`
 - assistant messages: `content[]` with `text` reasoning and `toolCall` entries (`name`, `id`, `arguments`)
 - tool results: `toolCallId`, `toolName`, `isError`, `content`
 - `usage` field on assistant messages: `input`, `output`, `cacheRead`, `cacheWrite`, `totalTokens`, `cost`
-- To trace failure: inspect the last activity log, find `isError: true`, and read preceding reasoning text
+- To trace failure: inspect the last activity log, find `isError: true`, and read preceding reasoning
 
 ### Journal Format (`.gsd/journal/`)
 
-The journal is a structured event log for auto-mode iterations. Each daily file contains JSONL entries:
+The journal is a structured event log for auto-mode iterations. Daily files contain JSONL:
 
 ```
 { ts: "ISO-8601", flowId: "UUID", seq: 0, eventType: "iteration-start", rule?: "rule-name", causedBy?: { flowId, seq }, data?: { unitId, status, ... } }
 ```
 
-Key event types: `iteration-start/end`, `dispatch-match/stop`, `unit-start/end`, `terminal`, `guard-block`, `stuck-detected`, `milestone-transition`, and worktree events (`worktree-enter`, `worktree-create-failed`, `worktree-merge-start`, `worktree-merge-failed`).
+Key event types: `iteration-start/end`, `dispatch-match/stop`, `unit-start/end`, `terminal`, `guard-block`, `stuck-detected`, `milestone-transition`, and worktree events.
 
 Key fields: `flowId` groups one loop iteration; `causedBy` links causal events; `seq` orders events inside a flow.
 
-Trace stuck loops by filtering `stuck-detected`, then follow `flowId`. Trace guard blocks by filtering `guard-block` and reading `data.reason`.
+Trace stuck loops by filtering `stuck-detected`, then follow `flowId`. Trace guard blocks via `guard-block` and `data.reason`.
 
 ### Crash Lock Format (`auto.lock`)
 
 JSON with fields: `pid`, `startedAt`, `unitType`, `unitId`, `unitStartedAt`, `completedUnits`, `sessionFile`
 
-A stale lock (PID is dead) means the previous auto-mode session crashed mid-unit.
+A stale lock (dead PID) means the previous auto-mode session crashed mid-unit.
 
 ### Metrics Ledger Format (`metrics.json`)
 
@@ -86,13 +86,13 @@ A stale lock (PID is dead) means the previous auto-mode session crashed mid-unit
 { version: 1, projectStartedAt: <ms>, units: [{ type, id, model, startedAt, finishedAt, tokens: { input, output, cacheRead, cacheWrite, total }, cost, toolCalls, assistantMessages, ... }] }
 ```
 
-A unit dispatched more than once (`type/id` appears multiple times) indicates a stuck loop — the unit completed but artifact verification failed.
+A unit dispatched more than once (`type/id` repeated) indicates a stuck loop: unit completed but artifact verification failed.
 
 {{dedupSection}}
 
 ## Investigation Protocol
 
-1. Start with the forensic report. Treat anomaly findings as leads, not conclusions.
+1. Start with the forensic report. Treat anomalies as leads, not conclusions.
 
 2. Check the journal timeline if present. Use flow IDs to group dispatches, guards, stuck detection, state transitions, and worktree operations.
 
@@ -102,9 +102,9 @@ A unit dispatched more than once (`type/id` appears multiple times) indicates a 
 
 5. Read actual source at `{{gsdSourceDir}}` to confirm or deny each hypothesis. Do not guess.
 
-   **DB inspection:** If you need to check DB state as part of investigation, use `gsd_milestone_status` — never run `sqlite3 .gsd/gsd.db` or `node -e require('better-sqlite3')` directly. The engine holds a WAL write lock; direct access will either fail or return stale data.
+   **DB inspection:** Use `gsd_milestone_status`; never run `sqlite3 .gsd/gsd.db` or `node -e require('better-sqlite3')`. The engine owns the WAL connection; direct access can fail or return stale data.
 
-6. Trace from entry point (usually `auto-loop.ts` or `auto-dispatch.ts`) to failure. Follow calls across files.
+6. Trace from entry point, usually `auto-loop.ts` or `auto-dispatch.ts`, to failure across files.
 
 7. Identify the specific file and line. Classify the defect:
    - Missing edge case / unhandled condition
@@ -117,7 +117,7 @@ A unit dispatched more than once (`type/id` appears multiple times) indicates a 
 
 ## Output
 
-Explain your findings:
+Explain findings:
 - **What happened** — the failure sequence reconstructed from activity logs and anomalies
 - **Why it happened** — root cause traced to specific code in GSD source, with `file:line` references
 - **Code snippet** — the problematic code and what it should do instead
@@ -125,7 +125,7 @@ Explain your findings:
 
 Then **offer GitHub issue creation**: "Would you like me to create a GitHub issue for this on gsd-build/gsd-2?"
 
-**CRITICAL:** The `github_issues` tool targets only the current user's repository and has no `repo` parameter. Use `gh issue create --repo gsd-build/gsd-2` via the `bash` tool. Do NOT use the `github_issues` tool.
+**CRITICAL:** The `github_issues` tool targets only the current user's repository and has no `repo` parameter. Use `gh issue create --repo gsd-build/gsd-2` via `bash`. Do NOT use `github_issues`.
 
 If yes, create using the `bash` tool:
 
@@ -180,4 +180,4 @@ Before creating the issue, you MUST:
 
 ## Report Saved
 
-Remind the user that the full forensic report was saved locally (the path will be in the notification).
+Remind the user that the full forensic report was saved locally; the notification includes the path.
